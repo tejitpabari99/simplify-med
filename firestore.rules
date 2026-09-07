@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /care_plan_outputs/{docId} {
+      allow get: if resource == null
+                  || (request.auth != null && request.auth.uid == resource.data.uid)
+                  || resource.data.shared == true;
+      allow list: if request.auth != null && request.auth.uid == resource.data.uid;
+      allow write: if false;
+    }
+
+    // Per-IP rate-limit counters (utils/rate_limit.py). Written only by the
+    // backend via the Firebase Admin SDK, which bypasses these rules entirely
+    // -- this block exists only to explicitly deny all client access as a
+    // defense-in-depth backstop.
+    match /rate_limits/{docId} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,16 @@
+.gcloudignore
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.json.key
+serviceAccountKey.json
+*firebase-adminsdk*.json

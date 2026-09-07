@@ -1,0 +1,389 @@
+{
+  "metrics": {
+    "session_id": "job-real-1",
+    "pipeline_version": "v1-2",
+    "input_type": "text",
+    "created_at": "2026-09-05T19:13:54.056188+00:00",
+    "total_duration_ms": null,
+    "saved_id": "job-real-1"
+  },
+  "input": {
+    "mode": "text",
+    "text": "original raw input text"
+  },
+  "grading": {
+    "entries": [
+      {
+        "name": "SMOG",
+        "target": "before",
+        "grade": 0.0,
+        "description": null,
+        "grade_breakdown": {
+          "grade": 0.0,
+          "insufficient_sample": true
+        },
+        "reasoning": "SMOG (McLaughlin 1969) \u2014 counts polysyllabic words; designed for health materials"
+      },
+      {
+        "name": "Flesch-Kincaid",
+        "target": "before",
+        "grade": 12.0,
+        "description": null,
+        "grade_breakdown": {
+          "reading_ease": 12.4,
+          "grade_level": 12.5
+        },
+        "reasoning": "Flesch-Kincaid Reading Ease + Grade Level (1975) \u2014 sentence length \u00d7 syllable load"
+      },
+      {
+        "name": "Dale-Chall",
+        "target": "before",
+        "grade": 0.0,
+        "description": null,
+        "grade_breakdown": {
+          "raw_score": 15.68,
+          "grade_range": "College level"
+        },
+        "reasoning": "Dale-Chall (1948/1995) \u2014 difficult words outside the 3,000 familiar-word list"
+      },
+      {
+        "name": "PEMAT",
+        "target": "before",
+        "grade": 38.0,
+        "description": null,
+        "grade_breakdown": {
+          "understandability": 75,
+          "actionability": 0
+        },
+        "reasoning": "PEMAT (AHRQ 2013) \u2014 automated approximation of items 3,8,14,21-22 (understandability) and 27-33 (actionability)"
+      },
+      {
+        "name": "SAM",
+        "target": "before",
+        "grade": 54.0,
+        "description": null,
+        "grade_breakdown": {
+          "content": 1,
+          "literacy_demand": 8,
+          "layout_typography": 6
+        },
+        "reasoning": "SAM (Doak et al. 1996) \u2014 automated approximation of content, literacy demand, and layout/typography domains"
+      },
+      {
+        "name": "CDC CCI",
+        "target": "before",
+        "grade": 50.0,
+        "description": null,
+        "grade_breakdown": {
+          "main_message": 0,
+          "behavioral_recommendations": 1,
+          "numbers": 1,
+          "call_to_action": 0
+        },
+        "reasoning": "CDC Clear Communication Index \u2014 automated approximation of main message, behavioral recommendations, numbers, and call-to-action items"
+      },
+      {
+        "name": "combined",
+        "target": "before",
+        "grade": 49.0,
+        "description": null,
+        "grade_breakdown": {
+          "grade_estimate": 14.3,
+          "label": "Moderate",
+          "word_count": 4,
+          "dimensions": {
+            "grade_level": {
+              "score": 15,
+              "raw": 14.3,
+              "label": "Grade Level",
+              "unit": "grade"
+            },
+            "jargon_density": {
+              "score": 0,
+              "raw": 0.5,
+              "label": "Jargon Density",
+              "unit": "proportion"
+            },
+            "sentence_complexity": {
+              "score": 100,
+              "raw": 4.0,
+              "label": "Sentence Length",
+              "unit": "words/sentence"
+            },
+            "passive_voice": {
+              "score": 100,
+              "raw": 0.0,
+              "label": "Active Voice",
+              "unit": "passive ratio"
+            },
+            "actionability": {
+              "score": 0,
+              "raw": 0.0,
+              "label": "Actionability",
+              "unit": "you-rate"
+            },
+            "numeracy_clarity": {
+              "score": 100,
+              "raw": 0.0,
+              "label": "Numeric Clarity",
+              "unit": "vague count"
+            },
+            "structural_clarity": {
+              "score": 100,
+              "raw": 4.0,
+              "label": "Structure",
+              "unit": "words/paragraph"
+            }
+          }
+        },
+        "reasoning": null
+      },
+      {
+        "name": "SMOG",
+        "target": "after",
+        "grade": 0.0,
+        "description": null,
+        "grade_breakdown": {
+          "grade": 0.0,
+          "insufficient_sample": true
+        },
+        "reasoning": "SMOG (McLaughlin 1969) \u2014 counts polysyllabic words; designed for health materials"
+      },
+      {
+        "name": "Flesch-Kincaid",
+        "target": "after",
+        "grade": 0.0,
+        "description": null,
+        "grade_breakdown": {
+          "reading_ease": -21.8,
+          "grade_level": 17.0
+        },
+        "reasoning": "Flesch-Kincaid Reading Ease + Grade Level (1975) \u2014 sentence length \u00d7 syllable load"
+      },
+      {
+        "name": "Dale-Chall",
+        "target": "after",
+        "grade": 0.0,
+        "description": null,
+        "grade_breakdown": {
+          "raw_score": 19.58,
+          "grade_range": "College level"
+        },
+        "reasoning": "Dale-Chall (1948/1995) \u2014 difficult words outside the 3,000 familiar-word list"
+      },
+      {
+        "name": "PEMAT",
+        "target": "after",
+        "grade": 38.0,
+        "description": null,
+        "grade_breakdown": {
+          "understandability": 75,
+          "actionability": 0
+        },
+        "reasoning": "PEMAT (AHRQ 2013) \u2014 automated approximation of items 3,8,14,21-22 (understandability) and 27-33 (actionability)"
+      },
+      {
+        "name": "SAM",
+        "target": "after",
+        "grade": 46.0,
+        "description": null,
+        "grade_breakdown": {
+          "content": 0,
+          "literacy_demand": 7,
+          "layout_typography": 6
+        },
+        "reasoning": "SAM (Doak et al. 1996) \u2014 automated approximation of content, literacy demand, and layout/typography domains"
+      },
+      {
+        "name": "CDC CCI",
+        "target": "after",
+        "grade": 50.0,
+        "description": null,
+        "grade_breakdown": {
+          "main_message": 0,
+          "behavioral_recommendations": 1,
+          "numbers": 1,
+          "call_to_action": 0
+        },
+        "reasoning": "CDC Clear Communication Index \u2014 automated approximation of main message, behavioral recommendations, numbers, and call-to-action items"
+      },
+      {
+        "name": "combined",
+        "target": "after",
+        "grade": 45.0,
+        "description": null,
+        "grade_breakdown": {
+          "grade_estimate": 16.5,
+          "label": "Moderate",
+          "word_count": 3,
+          "dimensions": {
+            "grade_level": {
+              "score": 0,
+              "raw": 16.5,
+              "label": "Grade Level",
+              "unit": "grade"
+            },
+            "jargon_density": {
+              "score": 0,
+              "raw": 1.0,
+              "label": "Jargon Density",
+              "unit": "proportion"
+            },
+            "sentence_complexity": {
+              "score": 100,
+              "raw": 3.0,
+              "label": "Sentence Length",
+              "unit": "words/sentence"
+            },
+            "passive_voice": {
+              "score": 100,
+              "raw": 0.0,
+              "label": "Active Voice",
+              "unit": "passive ratio"
+            },
+            "actionability": {
+              "score": 0,
+              "raw": 0.0,
+              "label": "Actionability",
+              "unit": "you-rate"
+            },
+            "numeracy_clarity": {
+              "score": 100,
+              "raw": 0.0,
+              "label": "Numeric Clarity",
+              "unit": "vague count"
+            },
+            "structural_clarity": {
+              "score": 100,
+              "raw": 3.0,
+              "label": "Structure",
+              "unit": "words/paragraph"
+            }
+          }
+        },
+        "reasoning": null
+      }
+    ],
+    "enabled": true,
+    "graded_at": "2026-09-05T19:13:54.056159+00:00"
+  },
+  "care_plan": {
+    "version": "1.2",
+    "doc_type": "care_plan",
+    "urgency": "caution",
+    "summary": "You came in because your blood pressure has been high. Your doctor thinks hypertension is the main concern. Take your new medicine and schedule follow-up labs.",
+    "reason_for_visit": [
+      {
+        "reason": "High blood pressure",
+        "description": "You reported several home blood pressure readings above your usual range."
+      }
+    ],
+    "diagnosis": {
+      "main_conclusion": "Your blood pressure is still higher than the goal range.",
+      "changed_since_last_visit": "It has stayed high since your last visit.",
+      "details": [
+        {
+          "title": "Hypertension",
+          "plain_name": "High blood pressure",
+          "description": "The force of blood against your blood vessel walls is too high.",
+          "what_it_means_for_you": "This can strain your heart over time if it is not controlled.",
+          "severity": "medium"
+        }
+      ]
+    },
+    "medications": [
+      {
+        "title": "Lisinopril 10 milligrams",
+        "plain_name": "Blood pressure medicine",
+        "why": "It helps lower your blood pressure.",
+        "dosage": "10 milligrams",
+        "frequency": "once a day",
+        "timing": "in the morning",
+        "duration": "until your doctor changes it",
+        "instructions": "Take it at the same time each day.",
+        "side_effects_to_watch": "Call your doctor if you have dizziness or swelling.",
+        "importance": "high",
+        "source": "documents",
+        "change": true,
+        "change_description": "This medicine was started today."
+      }
+    ],
+    "tests": [
+      {
+        "title": "Basic metabolic panel",
+        "plain_name": "Blood chemistry test",
+        "why": "It checks kidney function after starting blood pressure medicine.",
+        "description": "A blood draw measures salts and kidney markers.",
+        "preparation": "No special preparation is needed.",
+        "importance": "high",
+        "source": "notes"
+      }
+    ],
+    "procedures": [
+      {
+        "title": "Blood pressure recheck",
+        "plain_name": "Blood pressure measurement",
+        "why": "It shows whether the medicine is working.",
+        "what_to_expect": "A clinician will measure your blood pressure in the clinic.",
+        "timeframe": "in 2 weeks",
+        "importance": "low",
+        "source": "recording"
+      }
+    ],
+    "other": [
+      {
+        "title": "Check blood pressure at home",
+        "why": "Home readings help your doctor adjust treatment.",
+        "steps": [
+          "Sit quietly for 5 minutes.",
+          "Write down the number."
+        ],
+        "description": "Measure your blood pressure once each morning.",
+        "frequency": "daily",
+        "duration": "for 2 weeks",
+        "importance": "high",
+        "source": "documents"
+      }
+    ],
+    "follow_up": [
+      {
+        "time_frame": "2 weeks",
+        "description": "Review your home blood pressure readings."
+      }
+    ],
+    "warning_signs": [
+      {
+        "symptom": "Chest pain",
+        "what_it_might_mean": "This could be a heart problem.",
+        "what_to_do": "Go to the emergency room.",
+        "urgency": "emergency",
+        "related_to": "high blood pressure",
+        "importance": "high",
+        "source": "notes"
+      }
+    ],
+    "questions": [
+      "What blood pressure number should I aim for?",
+      "When should I call about side effects?",
+      "How long should I keep a home blood pressure log?"
+    ],
+    "low_priority": [
+      "Your heart sounds were normal."
+    ],
+    "note": null,
+    "terms": {
+      "Hypertension": {
+        "definition": "Blood pressure that stays higher than normal.",
+        "source": "preserved",
+        "imgUrl": null,
+        "altText": null
+      }
+    },
+    "raw": {
+      "text": "Original clinical note text.",
+      "simplified_text": "Simplified note text.",
+      "clarified_text": "Clarified patient instructions."
+    },
+    "additional_info": []
+  }
+}

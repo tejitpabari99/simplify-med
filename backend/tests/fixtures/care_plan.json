@@ -1,0 +1,119 @@
+{
+  "doc_type": "care_plan",
+  "version": "1.2",
+  "urgency": "caution",
+  "summary": "You came in because your blood pressure has been high. Your doctor thinks hypertension is the main concern. Take your new medicine and schedule follow-up labs.",
+  "reason_for_visit": [
+    {
+      "reason": "High blood pressure",
+      "description": "You reported several home blood pressure readings above your usual range."
+    }
+  ],
+  "diagnosis": {
+    "main_conclusion": "Your blood pressure is still higher than the goal range.",
+    "changed_since_last_visit": "It has stayed high since your last visit.",
+    "details": [
+      {
+        "title": "Hypertension",
+        "plain_name": "High blood pressure",
+        "description": "The force of blood against your blood vessel walls is too high.",
+        "what_it_means_for_you": "This can strain your heart over time if it is not controlled.",
+        "severity": "medium"
+      }
+    ]
+  },
+  "medications": [
+    {
+      "title": "Lisinopril 10 milligrams",
+      "plain_name": "Blood pressure medicine",
+      "why": "It helps lower your blood pressure.",
+      "dosage": "10 milligrams",
+      "frequency": "once a day",
+      "timing": "in the morning",
+      "duration": "until your doctor changes it",
+      "instructions": "Take it at the same time each day.",
+      "side_effects_to_watch": "Call your doctor if you have dizziness or swelling.",
+      "importance": "high",
+      "source": "documents",
+      "change": true,
+      "change_description": "This medicine was started today."
+    }
+  ],
+  "tests": [
+    {
+      "title": "Basic metabolic panel",
+      "plain_name": "Blood chemistry test",
+      "why": "It checks kidney function after starting blood pressure medicine.",
+      "description": "A blood draw measures salts and kidney markers.",
+      "preparation": "No special preparation is needed.",
+      "importance": "high",
+      "source": "notes"
+    }
+  ],
+  "procedures": [
+    {
+      "title": "Blood pressure recheck",
+      "plain_name": "Blood pressure measurement",
+      "why": "It shows whether the medicine is working.",
+      "what_to_expect": "A clinician will measure your blood pressure in the clinic.",
+      "timeframe": "in 2 weeks",
+      "importance": "low",
+      "source": "recording"
+    }
+  ],
+  "other": [
+    {
+      "title": "Check blood pressure at home",
+      "why": "Home readings help your doctor adjust treatment.",
+      "steps": [
+        "Sit quietly for 5 minutes.",
+        "Write down the number."
+      ],
+      "description": "Measure your blood pressure once each morning.",
+      "frequency": "daily",
+      "duration": "for 2 weeks",
+      "importance": "high",
+      "source": "documents"
+    }
+  ],
+  "follow_up": [
+    {
+      "time_frame": "2 weeks",
+      "description": "Review your home blood pressure readings."
+    }
+  ],
+  "warning_signs": [
+    {
+      "symptom": "Chest pain",
+      "what_it_might_mean": "This could be a heart problem.",
+      "what_to_do": "Go to the emergency room.",
+      "urgency": "emergency",
+      "related_to": "high blood pressure",
+      "importance": "high",
+      "source": "notes"
+    }
+  ],
+  "questions": [
+    "What blood pressure number should I aim for?",
+    "When should I call about side effects?",
+    "How long should I keep a home blood pressure log?"
+  ],
+  "low_priority": [
+    "Your heart sounds were normal."
+  ],
+  "note": null,
+  "terms": {
+    "Hypertension": {
+      "definition": "Blood pressure that stays higher than normal.",
+      "source": "preserved",
+      "imgUrl": null,
+      "altText": null
+    }
+  },
+  "raw": {
+    "text": "Original clinical note text.",
+    "simplified_text": "Simplified note text.",
+    "clarified_text": "Clarified patient instructions."
+  },
+  "additional_info": []
+}

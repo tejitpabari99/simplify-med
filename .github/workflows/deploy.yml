@@ -1,0 +1,308 @@
+# Deploy — builds the backend image, deploys the two Cloud Run services
+# (simplify-api, simplify-worker), the retention Cloud Run Job + Cloud
+# Scheduler trigger, and the frontend to Firebase Hosting.
+#
+# Required GitHub Actions secrets:
+#   GCP_SA_KEY                    JSON key for a GCP service account that can run Cloud Build,
+#                                  deploy/update Cloud Run services and jobs, manage Cloud Tasks
+#                                  queues, manage Cloud Scheduler jobs, and update GCS bucket
+#                                  lifecycle rules on GCP_BUCKET_NAME.
+#   FIREBASE_SERVICE_ACCOUNT      Firebase Admin SDK service-account JSON (used by firebase-tools
+#                                  to deploy Firestore rules and Hosting).
+#   RATE_LIMIT_SALT               Secret salt for hashing client IPs in the per-IP rate limiter
+#                                  (backend RATE_LIMIT_SALT env var).
+#   VITE_FIREBASE_API_KEY
+#   VITE_FIREBASE_AUTH_DOMAIN
+#   VITE_FIREBASE_PROJECT_ID
+#   VITE_FIREBASE_STORAGE_BUCKET
+#   VITE_FIREBASE_MESSAGING_SENDER_ID
+#   VITE_FIREBASE_APP_ID
+#   VITE_API_PROCESSING_URL       Public base URL of the deployed simplify-api Cloud Run service,
+#                                  baked into the frontend build.
+#
+# Required GitHub Actions variables:
+#   GCP_PROJECT_ID                 GCP project to deploy into.
+#   GCP_REGION                     Cloud Run / Artifact Registry / Vertex AI region, e.g. "us-central1".
+#   GCP_BUCKET_NAME                GCS bucket used for uploaded input files.
+#   GCP_ARTIFACT_REPO              Artifact Registry repository name to push the backend image to.
+#   API_MAX_INSTANCES              Optional. Max Cloud Run instances for simplify-api (default "10").
+#   WORKER_MAX_INSTANCES           Optional. Max Cloud Run instances for simplify-worker (default "5").
+#
+# One-time manual GCP setup this workflow assumes already exists (deliberately not automated
+# here — infrequent, and safer as an explicit human action, matching this app's retention
+# design; see CONTRIBUTING.md):
+#   - Artifact Registry repository named GCP_ARTIFACT_REPO in GCP_REGION.
+#   - IAM service accounts simplify-worker-invoker@<project>.iam.gserviceaccount.com and
+#     simplify-scheduler-invoker@<project>.iam.gserviceaccount.com, each granted only the
+#     roles they need (run.invoker on the relevant service/job).
+#   - A Secret Manager secret named "firebase-service-account" holding the same Firebase Admin
+#     SDK JSON as the FIREBASE_SERVICE_ACCOUNT secret above, readable by the Cloud Run runtime
+#     service account.
+#   - A native Firestore TTL policy enabled on care_plan_outputs.expires_at (the job/output
+#     collection) and rate_limits.expires_at (`gcloud firestore fields ttls update expires_at
+#     --collection-group=<name> --database="(default)" --enable-ttl`, run once per collection)
+#     — this is the backstop half of this app's zero-retention design; the GCS lifecycle rule
+#     below is the other half and IS applied by this workflow on every deploy.
+
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  checks: write
+  statuses: write
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-backend:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_BUCKET_NAME: ${{ vars.GCP_BUCKET_NAME }}
+      BACKEND_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/simplify-backend
+      API_MAX_INSTANCES: ${{ vars.API_MAX_INSTANCES || '10' }}
+      WORKER_MAX_INSTANCES: ${{ vars.WORKER_MAX_INSTANCES || '5' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Select GCP project
+        run: gcloud config set project "$GCP_PROJECT_ID"
+
+      - name: Build and push backend image
+        run: |
+          gcloud builds submit \
+            --project "$GCP_PROJECT_ID" \
+            --tag "$BACKEND_IMAGE" \
+            ./backend
+
+      - name: Ensure Cloud Tasks queue exists
+        run: |
+          gcloud tasks queues create care-plan-jobs \
+            --location "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+            --max-concurrent-dispatches=5 --max-dispatches-per-second=2 \
+            || echo "queue already exists — continuing"
+
+      # First-pass, bare deploys. Only these two flags matter here: they create the
+      # revision (or update its image) so the two services exist and simplify-worker's
+      # URL can be read below. Both services use --min-instances=0 -- the source
+      # cloudbuild.yaml this was adapted from deployed the API service with
+      # --min-instances=1, contradicting this project's stated zero-idle-cost design;
+      # that inconsistency is deliberately NOT carried over here.
+      - name: Deploy simplify-worker (bare, first pass)
+        run: |
+          gcloud run deploy simplify-worker \
+            --image="$BACKEND_IMAGE" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --set-env-vars=SERVICE_MODE=worker \
+            --min-instances=0 \
+            --max-instances="$WORKER_MAX_INSTANCES" \
+            --no-allow-unauthenticated \
+            --ingress=internal \
+            --memory=2Gi \
+            --timeout=900
+
+      - name: Deploy simplify-api (bare, first pass)
+        run: |
+          gcloud run deploy simplify-api \
+            --image="$BACKEND_IMAGE" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --set-env-vars=SERVICE_MODE=api \
+            --min-instances=0 \
+            --max-instances="$API_MAX_INSTANCES" \
+            --allow-unauthenticated \
+            --memory=2Gi \
+            --timeout=300
+
+      - name: Configure simplify-api env vars and secrets
+        run: |
+          WORKER_URL=$(gcloud run services describe simplify-worker \
+            --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+            --format='value(status.url)')
+
+          API_ENV_VARS="GCP_PROJECT_ID=$GCP_PROJECT_ID,GCP_BUCKET_NAME=$GCP_BUCKET_NAME,GCP_LOCATION=$GCP_REGION,VERTEX_AI_MODEL=gemini-3.5-flash,FIRESTORE_DATABASE_ID=(default),CLOUD_TASKS_QUEUE=projects/$GCP_PROJECT_ID/locations/$GCP_REGION/queues/care-plan-jobs,WORKER_URL=$WORKER_URL,WORKER_SERVICE_ACCOUNT=simplify-worker-invoker@$GCP_PROJECT_ID.iam.gserviceaccount.com,RATE_LIMIT_SALT=${{ secrets.RATE_LIMIT_SALT }}"
+
+          gcloud run services update simplify-api \
+            --region "$GCP_REGION" \
+            --project "$GCP_PROJECT_ID" \
+            --memory 2Gi \
+            --timeout 300 \
+            --min-instances=0 \
+            --max-instances "$API_MAX_INSTANCES" \
+            --set-env-vars "$API_ENV_VARS" \
+            --set-secrets "FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest"
+
+      - name: Configure simplify-worker env vars and secrets
+        run: |
+          WORKER_ENV_VARS="GCP_PROJECT_ID=$GCP_PROJECT_ID,GCP_BUCKET_NAME=$GCP_BUCKET_NAME,GCP_LOCATION=$GCP_REGION,VERTEX_AI_MODEL=gemini-3.5-flash,FIRESTORE_DATABASE_ID=(default),WORKER_SERVICE_ACCOUNT=simplify-worker-invoker@$GCP_PROJECT_ID.iam.gserviceaccount.com,SERVICE_MODE=worker"
+
+          gcloud run services update simplify-worker \
+            --region "$GCP_REGION" \
+            --project "$GCP_PROJECT_ID" \
+            --memory 2Gi \
+            --timeout 900 \
+            --min-instances=0 \
+            --max-instances "$WORKER_MAX_INSTANCES" \
+            --set-env-vars "$WORKER_ENV_VARS" \
+            --set-secrets "FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest"
+
+      - name: Deploy anonymous-user-cleanup Cloud Run Job
+        run: |
+          gcloud run jobs deploy simplify-anon-cleanup \
+            --image="$BACKEND_IMAGE" \
+            --region="$GCP_REGION" \
+            --project="$GCP_PROJECT_ID" \
+            --command=python \
+            --args="-m,scripts.cleanup_anonymous_users" \
+            --update-env-vars="GCP_PROJECT_ID=$GCP_PROJECT_ID,FIRESTORE_DATABASE_ID=(default),RETENTION_DRY_RUN=false" \
+            --update-secrets="FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest" \
+            --task-timeout=1800 \
+            --max-retries=0 \
+            --memory=512Mi \
+            --cpu=1
+
+      # jobs update is idempotent on every re-run once the schedule exists; only the
+      # first run ever needs the create fallback. Auth here is an OAuth access token
+      # against the Cloud Run Admin API (the `:run` control-plane method), not an OIDC
+      # identity token against a Cloud Run service URL -- --oauth-service-account-email
+      # is the correct flag for that reason.
+      - name: Ensure Cloud Scheduler trigger for anonymous-user-cleanup exists
+        run: |
+          SCHEDULER_URI="https://$GCP_REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$GCP_PROJECT_ID/jobs/simplify-anon-cleanup:run"
+          SCHEDULER_SA="simplify-scheduler-invoker@$GCP_PROJECT_ID.iam.gserviceaccount.com"
+
+          gcloud scheduler jobs update http simplify-anon-cleanup-daily \
+            --project="$GCP_PROJECT_ID" \
+            --location="$GCP_REGION" \
+            --schedule="0 4 * * *" \
+            --time-zone="Etc/UTC" \
+            --uri="$SCHEDULER_URI" \
+            --http-method=POST \
+            --oauth-service-account-email="$SCHEDULER_SA" \
+          || gcloud scheduler jobs create http simplify-anon-cleanup-daily \
+            --project="$GCP_PROJECT_ID" \
+            --location="$GCP_REGION" \
+            --schedule="0 4 * * *" \
+            --time-zone="Etc/UTC" \
+            --uri="$SCHEDULER_URI" \
+            --http-method=POST \
+            --oauth-service-account-email="$SCHEDULER_SA"
+
+      # Backstop #1 of this app's zero-retention design (backstop #2 is the Firestore
+      # TTL policy — one-time manual setup, see the top-of-file comment). Scoped to the
+      # care_plan_inputs/ prefix that services/care_plan_input.py writes uploaded inputs
+      # under, so this can never touch anything else in the bucket.
+      - name: Apply GCS lifecycle rule for uploaded inputs
+        run: |
+          cat > /tmp/simplify-lifecycle-rule.json <<'EOF'
+          {"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["care_plan_inputs/"]}}]}
+          EOF
+          gcloud storage buckets update "gs://$GCP_BUCKET_NAME" \
+            --lifecycle-file=/tmp/simplify-lifecycle-rule.json \
+            --project="$GCP_PROJECT_ID"
+
+  deploy-frontend:
+    needs: deploy-backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_API_PROCESSING_URL: ${{ secrets.VITE_API_PROCESSING_URL }}
+
+      - name: Deploy Firestore rules
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          creds_file="$RUNNER_TEMP/firebase-service-account-rules.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$creds_file"
+          export GOOGLE_APPLICATION_CREDENTIALS="$creds_file"
+          trap 'rm -f "$creds_file"' EXIT
+
+          npx firebase-tools deploy --only firestore:rules \
+            --project "${{ vars.GCP_PROJECT_ID }}" --non-interactive
+
+      - name: Deploy to Firebase Hosting
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          creds_file="$RUNNER_TEMP/firebase-service-account.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$creds_file"
+          export GOOGLE_APPLICATION_CREDENTIALS="$creds_file"
+          trap 'rm -f "$creds_file"' EXIT
+
+          npx firebase-tools deploy --only hosting \
+            --project "${{ vars.GCP_PROJECT_ID }}" --non-interactive
+
+  tag:
+    needs: deploy-frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Tag production deploy
+        run: |
+          HEAD_SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+
+          git fetch --tags origin
+          existing_tag=$(git tag --points-at "$HEAD_SHA" 'prod-*' | head -n 1)
+          if [[ -n "$existing_tag" ]]; then
+            echo "Production tag already exists for $HEAD_SHA: $existing_tag"
+            exit 0
+          fi
+
+          tag_name="prod-$(date -u +%Y%m%d-%H%M%S)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag_name" "$HEAD_SHA" -m "Production deploy $tag_name"
+          git push origin "$tag_name"
+          echo "Created production tag $tag_name for $HEAD_SHA"

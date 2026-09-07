@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ahrq_plain_language",
+    "name": "AHRQ Health Literacy Universal Precautions Toolkit plain-language words",
+    "fileName": "ahrq_plain_language.json",
+    "link": "https://www.ahrq.gov/sites/default/files/wysiwyg/health-literacy/3rd-edition-toolkit/health-literacy-toolkit-third-edition.pdf",
+    "description": "A list of plain-language words and phrases used in the AHRQ Health Literacy Universal Precautions Toolkit.",
+    "notes": null
+  },
+  {
+    "id": "michigan_medical_dictionary",
+    "name": "University of Michigan Plain Language Medical Dictionary",
+    "fileName": "michigan_medical_dictionary.json",
+    "link": "https://medicaldictionary.lib.umich.edu/",
+    "description": "A comprehensive dictionary of plain-language medical terms and definitions from the University of Michigan.",
+    "notes": null
+  },
+  {
+    "id": "local_abbreviations",
+    "name": "Local medical abbreviation expansions",
+    "fileName": "abbreviations.json",
+    "link": null,
+    "description": "A list of common medical abbreviations and their full expansions.",
+    "notes": "Dotted letter variants are matched automatically at runtime, so bid also matches b.i.d."
+  }
+]

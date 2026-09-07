@@ -1,0 +1,27 @@
+flask==3.0.0
+flask-cors==4.0.0
+firebase-admin==6.6.0
+google-cloud-firestore
+google-cloud-storage
+google-cloud-aiplatform
+python-dotenv==1.0.0
+werkzeug==3.0.1
+gunicorn
+PyPDF2==3.0.1
+pypdf
+reportlab
+Pillow
+pillow-heif
+python-docx
+beautifulsoup4
+textstat
+pydantic>=2.7,<3
+
+# OpenTelemetry — tracing & session correlation
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-gcp-trace
+opentelemetry-instrumentation-flask
+opentelemetry-instrumentation-requests
+
+google-cloud-tasks

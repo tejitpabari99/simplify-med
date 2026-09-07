@@ -1,0 +1,5 @@
+pytest
+pytest-cov
+reportlab
+pypdf
+ruff>=0.4,<0.5

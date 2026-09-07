@@ -1,0 +1,1198 @@
+[
+  {
+    "term": "absence, absence of",
+    "replacement": "no, none, not here, not present, without"
+  },
+  {
+    "term": "accessible",
+    "replacement": "open, ready, within reach, can be used by"
+  },
+  {
+    "term": "accommodate",
+    "replacement": "meet, agree to"
+  },
+  {
+    "term": "accompany",
+    "replacement": "go with, show up with, go along with"
+  },
+  {
+    "term": "accomplish",
+    "replacement": "carry out, do"
+  },
+  {
+    "term": "accordance (with)",
+    "replacement": "agree with, follows"
+  },
+  {
+    "term": "accordingly",
+    "replacement": "so"
+  },
+  {
+    "term": "accurate",
+    "replacement": "correct, exact, right"
+  },
+  {
+    "term": "achieve",
+    "replacement": "do, make"
+  },
+  {
+    "term": "acknowledge",
+    "replacement": "thank you for, accepted, recognized, approved"
+  },
+  {
+    "term": "acquire",
+    "replacement": "get, buy"
+  },
+  {
+    "term": "activate",
+    "replacement": "begin, start, turn on, act"
+  },
+  {
+    "term": "active role",
+    "replacement": "taking part in"
+  },
+  {
+    "term": "activity",
+    "replacement": "something you do (often)"
+  },
+  {
+    "term": "actual",
+    "replacement": "real"
+  },
+  {
+    "term": "acute",
+    "replacement": "sudden, happen without warning, sickness that lasts a short time and goes away"
+  },
+  {
+    "term": "additional",
+    "replacement": "more, added, extra, other"
+  },
+  {
+    "term": "address",
+    "replacement": "discuss, talk about"
+  },
+  {
+    "term": "adhere and adherence:",
+    "replacement": "sticks to"
+  },
+  {
+    "term": "administer",
+    "replacement": "run, handle, direct, manage, to give out"
+  },
+  {
+    "term": "advanced (stages)",
+    "replacement": "late stages, far along"
+  },
+  {
+    "term": "advantageous",
+    "replacement": "helpful, better, useful"
+  },
+  {
+    "term": "adverse",
+    "replacement": "bad"
+  },
+  {
+    "term": "adverse event",
+    "replacement": "injury or hurt"
+  },
+  {
+    "term": "adversely affect/impact",
+    "replacement": "hurt, set back, make worse"
+  },
+  {
+    "term": "advise",
+    "replacement": "recommend, tell"
+  },
+  {
+    "term": "affix",
+    "replacement": "stick, join, attach, add, fasten"
+  },
+  {
+    "term": "afford an opportunity",
+    "replacement": "allow, let"
+  },
+  {
+    "term": "affordable",
+    "replacement": "low cost, at a good price, at a price you can pay"
+  },
+  {
+    "term": "aggregate",
+    "replacement": "total"
+  },
+  {
+    "term": "ailment",
+    "replacement": "sickness, illness, problem with your health"
+  },
+  {
+    "term": "alleviate your symptoms",
+    "replacement": "help you feel better"
+  },
+  {
+    "term": "allergen",
+    "replacement": "something that causes an allergy"
+  },
+  {
+    "term": "allocate",
+    "replacement": "divide, give, share"
+  },
+  {
+    "term": "alternative",
+    "replacement": "choice, option, other"
+  },
+  {
+    "term": "ameliorate",
+    "replacement": "improve, make better"
+  },
+  {
+    "term": "amend",
+    "replacement": "change"
+  },
+  {
+    "term": "analgesic",
+    "replacement": "pain killer"
+  },
+  {
+    "term": "anticipate",
+    "replacement": "expect"
+  },
+  {
+    "term": "apparent",
+    "replacement": "clear, plain, easy to see"
+  },
+  {
+    "term": "apparently",
+    "replacement": "it seems, we think, it looks like"
+  },
+  {
+    "term": "appreciable",
+    "replacement": "many, much, large"
+  },
+  {
+    "term": "appropriate",
+    "replacement": "right, correct, useful"
+  },
+  {
+    "term": "approximately",
+    "replacement": "about"
+  },
+  {
+    "term": "are requested to",
+    "replacement": "please"
+  },
+  {
+    "term": "are required to",
+    "replacement": "must"
+  },
+  {
+    "term": "as a consequence of",
+    "replacement": "because"
+  },
+  {
+    "term": "as a means of",
+    "replacement": "to"
+  },
+  {
+    "term": "ascertain",
+    "replacement": "decide, find out, learn, tell, confirm"
+  },
+  {
+    "term": "assist, assistance",
+    "replacement": "aid, help"
+  },
+  {
+    "term": "associated with",
+    "replacement": "goes along with, is part of, linked to, related to, happens with"
+  },
+  {
+    "term": "attain",
+    "replacement": "meet a goal, get, reach, receive"
+  },
+  {
+    "term": "attempt",
+    "replacement": "try"
+  },
+  {
+    "term": "at the present time",
+    "replacement": "at present, now"
+  },
+  {
+    "term": "authorization",
+    "replacement": "permission, your written permission, your written approval"
+  },
+  {
+    "term": "authorize",
+    "replacement": "let, allow, approve, permit"
+  },
+  {
+    "term": "authorizing disclosures",
+    "replacement": "allowing us to share information"
+  },
+  {
+    "term": "avoid",
+    "replacement": "stay away from, do not use"
+  },
+  {
+    "term": "be advised",
+    "replacement": "know"
+  },
+  {
+    "term": "before any costs are incurred",
+    "replacement": "before we do anything that will cost you"
+  },
+  {
+    "term": "be in the position to",
+    "replacement": "can"
+  },
+  {
+    "term": "beneficial",
+    "replacement": "helpful"
+  },
+  {
+    "term": "benign",
+    "replacement": "is not cancer"
+  },
+  {
+    "term": "burdensome",
+    "replacement": "difficult, hard, tough"
+  },
+  {
+    "term": "capable of, capability",
+    "replacement": "able to, ability, can"
+  },
+  {
+    "term": "caveat",
+    "replacement": "warning"
+  },
+  {
+    "term": "cease",
+    "replacement": "end, stop"
+  },
+  {
+    "term": "chronic",
+    "replacement": "happens again and again, does not end, goes on for a long time"
+  },
+  {
+    "term": "clinical",
+    "replacement": "indicators signs or symptoms of your health problem"
+  },
+  {
+    "term": "collaborate",
+    "replacement": "work together, work with"
+  },
+  {
+    "term": "collect and maintain",
+    "replacement": "get and keep"
+  },
+  {
+    "term": "communicate",
+    "replacement": "tell, let you know"
+  },
+  {
+    "term": "compensate",
+    "replacement": "pay"
+  },
+  {
+    "term": "competent",
+    "replacement": "able to make choices, decisions"
+  },
+  {
+    "term": "complications (flu-caused)",
+    "replacement": "health problems caused by (the flu)"
+  },
+  {
+    "term": "comply with",
+    "replacement": "follow, obey"
+  },
+  {
+    "term": "comprehensive",
+    "replacement": "total, all, the whole, complete, full, major, large"
+  },
+  {
+    "term": "comprise",
+    "replacement": "make, form, include, made up of, gives, is"
+  },
+  {
+    "term": "concept",
+    "replacement": "idea"
+  },
+  {
+    "term": "concerning",
+    "replacement": "about, on"
+  },
+  {
+    "term": "condition",
+    "replacement": "health problem, how you feel"
+  },
+  {
+    "term": "consent",
+    "replacement": "accept, permit, let"
+  },
+  {
+    "term": "consequently",
+    "replacement": "so"
+  },
+  {
+    "term": "consider",
+    "replacement": "think about"
+  },
+  {
+    "term": "constitutes",
+    "replacement": "is, forms, makes up, gives"
+  },
+  {
+    "term": "consult",
+    "replacement": "ask, check with, refer to, look at, talk to, meet"
+  },
+  {
+    "term": "contact",
+    "replacement": "touch, get close to, be near, in the same area as, get in touch with"
+  },
+  {
+    "term": "contagious disease",
+    "replacement": "sickness that you can get from or give to another person"
+  },
+  {
+    "term": "contains",
+    "replacement": "has"
+  },
+  {
+    "term": "contaminated",
+    "replacement": "dirty, unsafe, not clean"
+  },
+  {
+    "term": "contributes to",
+    "replacement": "also causes"
+  },
+  {
+    "term": "currently",
+    "replacement": "now"
+  },
+  {
+    "term": "deceased",
+    "replacement": "dead, someone who died"
+  },
+  {
+    "term": "deductible",
+    "replacement": "the amount you pay before your insurance starts to pay"
+  },
+  {
+    "term": "demographics",
+    "replacement": "personal statistics, personal information"
+  },
+  {
+    "term": "designate",
+    "replacement": "choose, name, select, pick"
+  },
+  {
+    "term": "desire",
+    "replacement": "want, wish"
+  },
+  {
+    "term": "detailed",
+    "replacement": "complete, with all the facts, covers everything"
+  },
+  {
+    "term": "detect",
+    "replacement": "find"
+  },
+  {
+    "term": "determine",
+    "replacement": "decide, figure, find out"
+  },
+  {
+    "term": "detrimental",
+    "replacement": "bad, harmful"
+  },
+  {
+    "term": "develop",
+    "replacement": "make, write, form, create, learn"
+  },
+  {
+    "term": "diagnosis",
+    "replacement": "cause of your illness, what your illness is called"
+  },
+  {
+    "term": "diet",
+    "replacement": "what you eat, your meals"
+  },
+  {
+    "term": "difficulties",
+    "replacement": "problems"
+  },
+  {
+    "term": "disclose",
+    "replacement": "show, share, give, tell"
+  },
+  {
+    "term": "discontinue",
+    "replacement": "drop, stop, end, quit, cancel"
+  },
+  {
+    "term": "disturbance",
+    "replacement": "problem, change, something unusual"
+  },
+  {
+    "term": "documents",
+    "replacement": "records, papers, proof"
+  },
+  {
+    "term": "dosage, dose",
+    "replacement": "amount, how much medicine to take"
+  },
+  {
+    "term": "due to the fact that",
+    "replacement": "since, because"
+  },
+  {
+    "term": "dysfunction",
+    "replacement": "problem"
+  },
+  {
+    "term": "economical",
+    "replacement": "low cost"
+  },
+  {
+    "term": "educate",
+    "replacement": "teach, tell, show"
+  },
+  {
+    "term": "effect, effectiveness",
+    "replacement": "make, result, success, consequence, how something works"
+  },
+  {
+    "term": "effective date",
+    "replacement": "takes effect on, starts on"
+  },
+  {
+    "term": "eg",
+    "replacement": "for example"
+  },
+  {
+    "term": "elect",
+    "replacement": "choose, pick"
+  },
+  {
+    "term": "eliminate",
+    "replacement": "cut, drop, end, quit, stop"
+  },
+  {
+    "term": "employ",
+    "replacement": "use"
+  },
+  {
+    "term": "enable",
+    "replacement": "allow, make possible"
+  },
+  {
+    "term": "enclosed",
+    "replacement": "inside, with this ____, included"
+  },
+  {
+    "term": "enlarge",
+    "replacement": "get bigger, make bigger"
+  },
+  {
+    "term": "ensure",
+    "replacement": "make sure"
+  },
+  {
+    "term": "equitable",
+    "replacement": "fair"
+  },
+  {
+    "term": "equivalent",
+    "replacement": "equal, the same"
+  },
+  {
+    "term": "establish",
+    "replacement": "set up, prove, show, start"
+  },
+  {
+    "term": "evaluate",
+    "replacement": "test, check, rate, decide, think about, work out, study"
+  },
+  {
+    "term": "evidence-based",
+    "replacement": "shown to work, proven to work, tested"
+  },
+  {
+    "term": "evident",
+    "replacement": "clear, plain, easy to see"
+  },
+  {
+    "term": "exacerbate",
+    "replacement": "make worse"
+  },
+  {
+    "term": "examination",
+    "replacement": "exam, test"
+  },
+  {
+    "term": "examine",
+    "replacement": "look at, check, test"
+  },
+  {
+    "term": "exceeds",
+    "replacement": "out does, passes, tops, goes beyond, is above"
+  },
+  {
+    "term": "excessive",
+    "replacement": "too many"
+  },
+  {
+    "term": "exclusions",
+    "replacement": "services not covered by the plan, services your insurance does not pay for"
+  },
+  {
+    "term": "exclusively",
+    "replacement": "only"
+  },
+  {
+    "term": "explain",
+    "replacement": "tell, show"
+  },
+  {
+    "term": "extensive",
+    "replacement": "complete, full, goes on for a long time, large, long, major"
+  },
+  {
+    "term": "facilitate",
+    "replacement": "ease, make easier, help, move along, guide"
+  },
+  {
+    "term": "facilities",
+    "replacement": "clinics, offices, buildings"
+  },
+  {
+    "term": "factor",
+    "replacement": "other thing"
+  },
+  {
+    "term": "failed to",
+    "replacement": "did not"
+  },
+  {
+    "term": "feasible",
+    "replacement": "can be done, workable, will work, possible, can do, doable"
+  },
+  {
+    "term": "febrile",
+    "replacement": "feverish"
+  },
+  {
+    "term": "finalize",
+    "replacement": "complete, finish, end"
+  },
+  {
+    "term": "for further instructions",
+    "replacement": "to find out what to do next"
+  },
+  {
+    "term": "formulary drugs",
+    "replacement": "a list of the prescriptions covered by your insurance company"
+  },
+  {
+    "term": "forward",
+    "replacement": "send, give"
+  },
+  {
+    "term": "frequently",
+    "replacement": "often"
+  },
+  {
+    "term": "function",
+    "replacement": "act, role, work, do, serve"
+  },
+  {
+    "term": "fundamental",
+    "replacement": "basic"
+  },
+  {
+    "term": "grant",
+    "replacement": "give"
+  },
+  {
+    "term": "grievance",
+    "replacement": "complaint, problem, you do not agree"
+  },
+  {
+    "term": "guidelines",
+    "replacement": "rules, steps to follow, directions, recommendations"
+  },
+  {
+    "term": "hazardous",
+    "replacement": "not safe, dangerous, harmful, bad, risky"
+  },
+  {
+    "term": "identical",
+    "replacement": "same"
+  },
+  {
+    "term": "identifiable information",
+    "replacement": "personal information that can identify you"
+  },
+  {
+    "term": "identify",
+    "replacement": "find, name, show"
+  },
+  {
+    "term": "that is",
+    "replacement": "that is"
+  },
+  {
+    "term": "immediately",
+    "replacement": "at once, now, right now, right away, very soon"
+  },
+  {
+    "term": "impact",
+    "replacement": "affect, change, result"
+  },
+  {
+    "term": "implement",
+    "replacement": "start, put in place, get started, do, follow, carry out, set up"
+  },
+  {
+    "term": "in accordance with",
+    "replacement": "by, following, under"
+  },
+  {
+    "term": "in addition",
+    "replacement": "also, besides, too"
+  },
+  {
+    "term": "incapable",
+    "replacement": "unable, unfit, helpless, cannot do"
+  },
+  {
+    "term": "inception",
+    "replacement": "start, beginning"
+  },
+  {
+    "term": "incomplete",
+    "replacement": "lacking"
+  },
+  {
+    "term": "incorporate",
+    "replacement": "join, put together, combine, bring into"
+  },
+  {
+    "term": "incorrect",
+    "replacement": "wrong"
+  },
+  {
+    "term": "increasingly",
+    "replacement": "more often, more and more"
+  },
+  {
+    "term": "indicate",
+    "replacement": "show, tell, say, list, write down, mark, check off"
+  },
+  {
+    "term": "indication",
+    "replacement": "sign"
+  },
+  {
+    "term": "inflammation",
+    "replacement": "redness, swelling"
+  },
+  {
+    "term": "influenza",
+    "replacement": "flu"
+  },
+  {
+    "term": "inform",
+    "replacement": "tell, share, show, give information"
+  },
+  {
+    "term": "initial",
+    "replacement": "first"
+  },
+  {
+    "term": "initially",
+    "replacement": "at first, first, to start with"
+  },
+  {
+    "term": "initiate",
+    "replacement": "start, begin"
+  },
+  {
+    "term": "injections",
+    "replacement": "shots"
+  },
+  {
+    "term": "in lieu of",
+    "replacement": "instead of, or, in place of"
+  },
+  {
+    "term": "inquiries",
+    "replacement": "questions"
+  },
+  {
+    "term": "in regard to",
+    "replacement": "about, concerning, on"
+  },
+  {
+    "term": "insult",
+    "replacement": "injury, harm"
+  },
+  {
+    "term": "interfere",
+    "replacement": "get in the way of, keep from, cause problems, prevent"
+  },
+  {
+    "term": "intermittent",
+    "replacement": "off and on"
+  },
+  {
+    "term": "intervention",
+    "replacement": "action, treatment, program"
+  },
+  {
+    "term": "irregular",
+    "replacement": "uneven, not usual, not normal"
+  },
+  {
+    "term": "irreversible",
+    "replacement": "cannot be changed, cannot be fixed"
+  },
+  {
+    "term": "lesion",
+    "replacement": "wound"
+  },
+  {
+    "term": "localized",
+    "replacement": "in a small area, in one place, spot"
+  },
+  {
+    "term": "locate",
+    "replacement": "find, put"
+  },
+  {
+    "term": "lucid",
+    "replacement": "clear"
+  },
+  {
+    "term": "magnitude",
+    "replacement": "size"
+  },
+  {
+    "term": "maintain",
+    "replacement": "keep, keep up, care for, look after, save, support, take care of"
+  },
+  {
+    "term": "majority",
+    "replacement": "most, greatest"
+  },
+  {
+    "term": "manage",
+    "replacement": "control, direct, be in charge of, take care of, watch, pay attention to"
+  },
+  {
+    "term": "material change",
+    "replacement": "significant change"
+  },
+  {
+    "term": "maximum",
+    "replacement": "greatest, largest, most"
+  },
+  {
+    "term": "medications",
+    "replacement": "medicines, drugs, pills, syrups"
+  },
+  {
+    "term": "mentioned",
+    "replacement": "told, said, listed"
+  },
+  {
+    "term": "minimize",
+    "replacement": "decrease, lessen, reduce"
+  },
+  {
+    "term": "minimum",
+    "replacement": "least, smallest"
+  },
+  {
+    "term": "modify",
+    "replacement": "change, fix"
+  },
+  {
+    "term": "monitor",
+    "replacement": "check on, watch, keep an eye on"
+  },
+  {
+    "term": "morbidity",
+    "replacement": "sick, sickness"
+  },
+  {
+    "term": "necessitate",
+    "replacement": "cause, make, have to, need to, must"
+  },
+  {
+    "term": "negligible",
+    "replacement": "very small, tiny"
+  },
+  {
+    "term": "non-prescription",
+    "replacement": "not ordered by a doctor, can be bought without a doctor\u2019s order, over the counter"
+  },
+  {
+    "term": "notify",
+    "replacement": "let us know, tell, call"
+  },
+  {
+    "term": "numerous",
+    "replacement": "many, [list a specific number]"
+  },
+  {
+    "term": "observe",
+    "replacement": "watch, see"
+  },
+  {
+    "term": "obtain",
+    "replacement": "get"
+  },
+  {
+    "term": "optimal",
+    "replacement": "best, greatest, most, ideal"
+  },
+  {
+    "term": "optional",
+    "replacement": "by choice"
+  },
+  {
+    "term": "oral",
+    "replacement": "by mouth, swallow"
+  },
+  {
+    "term": "partially",
+    "replacement": "partly"
+  },
+  {
+    "term": "participate",
+    "replacement": "take part in, join, go into, do"
+  },
+  {
+    "term": "perform",
+    "replacement": "do, carry out, end, finish, take"
+  },
+  {
+    "term": "permit",
+    "replacement": "let"
+  },
+  {
+    "term": "permissible",
+    "replacement": "allowed, you can"
+  },
+  {
+    "term": "pertaining to",
+    "replacement": "about, of, on"
+  },
+  {
+    "term": "physician",
+    "replacement": "doctor, provider"
+  },
+  {
+    "term": "portion",
+    "replacement": "part"
+  },
+  {
+    "term": "possess",
+    "replacement": "have, own"
+  },
+  {
+    "term": "precaution",
+    "replacement": "safety measure, care"
+  },
+  {
+    "term": "preclude",
+    "replacement": "prevent, stop, get in the way of"
+  },
+  {
+    "term": "predominant",
+    "replacement": "main"
+  },
+  {
+    "term": "preference",
+    "replacement": "choice, wish, desire, option"
+  },
+  {
+    "term": "prevalent",
+    "replacement": "common, happens often"
+  },
+  {
+    "term": "previous",
+    "replacement": "before, earlier, past, the time before"
+  },
+  {
+    "term": "previously",
+    "replacement": "before"
+  },
+  {
+    "term": "primary",
+    "replacement": "main, key, first"
+  },
+  {
+    "term": "prioritize",
+    "replacement": "rank, put in the right order, put first things first, put things in order of how important they are"
+  },
+  {
+    "term": "prior to",
+    "replacement": "before, earlier"
+  },
+  {
+    "term": "proceed",
+    "replacement": "do, go ahead, try"
+  },
+  {
+    "term": "prohibit",
+    "replacement": "forbid, ban, prevent, don\u2019t"
+  },
+  {
+    "term": "prolonged",
+    "replacement": "stays, lasts, carries on, goes on for a long time, continues"
+  },
+  {
+    "term": "promptly",
+    "replacement": "right away, soon"
+  },
+  {
+    "term": "provide",
+    "replacement": "give, offer, say, supply, list"
+  },
+  {
+    "term": "proximity (to)",
+    "replacement": "close to, near"
+  },
+  {
+    "term": "receive",
+    "replacement": "use, get"
+  },
+  {
+    "term": "recognize",
+    "replacement": "come to see, be aware of"
+  },
+  {
+    "term": "recover",
+    "replacement": "get well, get better, heal"
+  },
+  {
+    "term": "recur",
+    "replacement": "come back"
+  },
+  {
+    "term": "reduce",
+    "replacement": "cut, use less, lower"
+  },
+  {
+    "term": "refer",
+    "replacement": "send to"
+  },
+  {
+    "term": "refrain",
+    "replacement": "stop, stay away"
+  },
+  {
+    "term": "regarding",
+    "replacement": "about, of, on"
+  },
+  {
+    "term": "regardless",
+    "replacement": "no matter what"
+  },
+  {
+    "term": "reject",
+    "replacement": "turn down, deny, refuse"
+  },
+  {
+    "term": "relating to",
+    "replacement": "about, on"
+  },
+  {
+    "term": "remain",
+    "replacement": "stay"
+  },
+  {
+    "term": "remainder",
+    "replacement": "rest, left over"
+  },
+  {
+    "term": "require",
+    "replacement": "must, need, want, lack"
+  },
+  {
+    "term": "requirement",
+    "replacement": "need, rule"
+  },
+  {
+    "term": "reside",
+    "replacement": "live at, live with"
+  },
+  {
+    "term": "resolve",
+    "replacement": "decide, settle, agree, finish, go away, work out"
+  },
+  {
+    "term": "responsible for",
+    "replacement": "in charge of, handles"
+  },
+  {
+    "term": "restriction",
+    "replacement": "limit, rule against"
+  },
+  {
+    "term": "resume",
+    "replacement": "go back to, begin again, go on with, come back"
+  },
+  {
+    "term": "retain",
+    "replacement": "keep"
+  },
+  {
+    "term": "review",
+    "replacement": "check, go over, look at again"
+  },
+  {
+    "term": "revised",
+    "replacement": "new, changed"
+  },
+  {
+    "term": "safeguard",
+    "replacement": "protect, keep safe, save"
+  },
+  {
+    "term": "settle your account",
+    "replacement": "pay your bill"
+  },
+  {
+    "term": "severe",
+    "replacement": "strong, serious, harmful, dangerous, very bad"
+  },
+  {
+    "term": "significant",
+    "replacement": "important, major"
+  },
+  {
+    "term": "similar to",
+    "replacement": "like"
+  },
+  {
+    "term": "solely",
+    "replacement": "only"
+  },
+  {
+    "term": "solicit",
+    "replacement": "ask for, request"
+  },
+  {
+    "term": "specialist",
+    "replacement": "an expert in the field, a doctor who has special training"
+  },
+  {
+    "term": "state",
+    "replacement": "say, tell, write down"
+  },
+  {
+    "term": "statement",
+    "replacement": "bill, charge"
+  },
+  {
+    "term": "state-of-the-art",
+    "replacement": "latest"
+  },
+  {
+    "term": "submit",
+    "replacement": "give, send, mail, bring"
+  },
+  {
+    "term": "subsequent",
+    "replacement": "later, next, following"
+  },
+  {
+    "term": "substantially",
+    "replacement": "largely"
+  },
+  {
+    "term": "sufficient",
+    "replacement": "enough"
+  },
+  {
+    "term": "supplement",
+    "replacement": "add to"
+  },
+  {
+    "term": "supplementary",
+    "replacement": "extra, more"
+  },
+  {
+    "term": "symptoms",
+    "replacement": "problems, signs, or warnings of illness"
+  },
+  {
+    "term": "tablet",
+    "replacement": "pill, dose"
+  },
+  {
+    "term": "thereafter",
+    "replacement": "then, from the on, afterwards"
+  },
+  {
+    "term": "therefore",
+    "replacement": "so, then, for, since"
+  },
+  {
+    "term": "this office",
+    "replacement": "we"
+  },
+  {
+    "term": "timely",
+    "replacement": "prompt"
+  },
+  {
+    "term": "time period",
+    "replacement": "from _____ to _____"
+  },
+  {
+    "term": "toxic",
+    "replacement": "poisonous, unsafe"
+  },
+  {
+    "term": "transmit",
+    "replacement": "send, give to others, pass to others, spread"
+  },
+  {
+    "term": "ultimately",
+    "replacement": "in the end, finally"
+  },
+  {
+    "term": "unexpected",
+    "replacement": "unplanned, not expected, sudden"
+  },
+  {
+    "term": "urgent",
+    "replacement": "cannot wait long, needs attention very soon"
+  },
+  {
+    "term": "utilize, utilization",
+    "replacement": "use, make use of"
+  },
+  {
+    "term": "warrant",
+    "replacement": "call for, permit"
+  },
+  {
+    "term": "with regard to, with respect to",
+    "replacement": "about"
+  },
+  {
+    "term": "with the exception of",
+    "replacement": "except for"
+  },
+  {
+    "term": "withdraw",
+    "replacement": "take away, remove, take out"
+  },
+  {
+    "term": "witness",
+    "replacement": "see"
+  }
+]
