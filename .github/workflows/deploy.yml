@@ -62,15 +62,9 @@
 #     creates nor inspects either queue, and the deploy service account intentionally holds
 #     no Cloud Tasks permissions.
 #
-# Two known, deliberate departures from a "clean slate" simplify-* deploy, called out here so
-# they're easy to find and revisit:
-#   1. --min-instances=0 on juno-api. juno-api ran at --min-instances=1 in production before
-#      this takeover (no cold starts on the live site). This repo's design goal is zero
-#      idle cost, so this workflow deploys at min-instances=0 as stated below — but that IS a
-#      behavior change on a site with existing traffic: the first request after an idle period
-#      now pays a cold-start penalty it didn't pay before. Flip API_MIN_INSTANCES-equivalent
-#      back to 1 (edit the `--min-instances` flags below) if that regression isn't acceptable.
-#   2. GCP_LOCATION stays "global", not GCP_REGION. juno-api/juno-worker currently run Vertex AI
+# One known, deliberate departure from a "clean slate" simplify-* deploy, called out here so
+# it's easy to find and revisit:
+#   1. GCP_LOCATION stays "global", not GCP_REGION. juno-api/juno-worker currently run Vertex AI
 #      calls against location "global" in production (confirmed via `gcloud run services
 #      describe`), not the regional "us-central1" endpoint. Since VERTEX_AI_MODEL
 #      (gemini-3.5-flash) is already confirmed live and working at that location, this workflow
@@ -190,11 +184,9 @@ jobs:
       # across deploys (https://juno-worker-tmvzwqeigq-uc.a.run.app) but it's still read back
       # live rather than hardcoded, since a bare deploy is required anyway to update the image.
       #
-      # juno-api deploys at --min-instances=0 here, per this repo's stated zero-idle-cost
-      # design -- see the "known departures" note at the top of this file: juno-api ran at
-      # --min-instances=1 in production before this takeover, so this is a real behavior
-      # change (cold starts on the live site), kept here because it matches this repo's
-      # explicit design intent, not because it was overlooked.
+      # juno-worker deploys at --min-instances=0: it's invoked internally (async, via Cloud
+      # Tasks), not on the user-facing request path, so cold starts here don't affect site
+      # latency the way they would on juno-api.
       - name: Deploy juno-worker (bare, first pass)
         run: |
           gcloud run deploy juno-worker \
@@ -209,6 +201,10 @@ jobs:
             --memory=2Gi \
             --timeout=900
 
+      # juno-api deploys at --min-instances=1: it's the user-facing service (no cold starts
+      # on the live site), matching how it ran in production before this takeover. See
+      # `gcloud run services update juno-api ... --min-instances=1` below, which re-asserts
+      # the same value on the second pass.
       - name: Deploy juno-api (bare, first pass)
         run: |
           gcloud run deploy juno-api \
@@ -216,7 +212,7 @@ jobs:
             --region="$GCP_REGION" \
             --platform=managed \
             --set-env-vars=SERVICE_MODE=api \
-            --min-instances=0 \
+            --min-instances=1 \
             --max-instances="$API_MAX_INSTANCES" \
             --allow-unauthenticated \
             --memory=2Gi \
@@ -243,7 +239,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --memory 2Gi \
             --timeout 300 \
-            --min-instances=0 \
+            --min-instances=1 \
             --max-instances "$API_MAX_INSTANCES" \
             --set-env-vars "$API_ENV_VARS" \
             --set-secrets "FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest"
