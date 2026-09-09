@@ -1,0 +1,35 @@
+# Cloud Build config for the backend image, invoked from .github/workflows/deploy.yml via
+# `gcloud builds submit --config ./cloudbuild-backend.yaml`.
+#
+# This exists (instead of the simpler `gcloud builds submit --tag ...` shorthand) solely to
+# set `options.logging: CLOUD_LOGGING_ONLY` below. Without it, gcloud defaults to a logging
+# mode that requires the caller to hold project-level Viewer/Owner to stream/poll build
+# status, which the `github-actions-deploy` service account does not have (it only holds
+# narrow, purpose-specific roles: cloudbuild.builds.editor, run.admin, storage.admin,
+# artifactregistry.writer, secretmanager.secretAccessor, iam.serviceAccountUser). That gap
+# makes `gcloud builds submit` exit 1 with "This tool can only stream logs if you are
+# Viewer/Owner of the project..." even when the underlying build succeeds.
+# CLOUD_LOGGING_ONLY avoids that code path entirely. This mirrors the working config in the
+# predecessor `juno` repo's `backend/cloudbuild.yaml`, which deploys with the same service
+# account and the same constraint.
+#
+# The docker build/push steps below reproduce what `--tag` does implicitly; deploying to
+# Cloud Run stays in deploy.yml as separate gcloud run deploy steps, not here.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - $_BACKEND_IMAGE
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - $_BACKEND_IMAGE
+
+images:
+  - $_BACKEND_IMAGE
+
+options:
+  logging: CLOUD_LOGGING_ONLY
