@@ -38,8 +38,9 @@ app.config["MAX_CONTENT_LENGTH"] = 15 * 1024 * 1024
 CORS(
     app,
     origins=[
-        "https://your-production-domain.example",  # placeholder — replace with your deployed frontend origin
-        "http://localhost:5173",                    # frontend dev server
+        "https://juno-medical-clarity.web.app",        # production Firebase Hosting site
+        "https://juno-medical-clarity.firebaseapp.com",  # Firebase Hosting's alternate default domain
+        "http://localhost:5173",                       # frontend dev server
     ],
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Session-Id"],
