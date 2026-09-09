@@ -125,23 +125,59 @@ jobs:
       - name: Select GCP project
         run: gcloud config set project "$GCP_PROJECT_ID"
 
-      # Uses an explicit build config (cloudbuild-backend.yaml, repo root) instead of the
-      # `--tag` shorthand so we can set `options.logging: CLOUD_LOGGING_ONLY`. The deploy SA
-      # can run Cloud Build but isn't project Viewer/Owner, so the default logging mode makes
-      # `gcloud builds submit` exit 1 with "This tool can only stream logs if you are
-      # Viewer/Owner of the project" even when the underlying build succeeds (confirmed via
-      # `gcloud builds describe` -- the build and image push both completed fine, only the
-      # CLI's own log-polling failed). `--suppress-logs` does NOT avoid this check; only a
-      # CLOUD_LOGGING_ONLY build config does. This mirrors the working config in the
-      # predecessor juno repo's backend/cloudbuild.yaml, which uses the same service account
-      # under the same constraint. See cloudbuild-backend.yaml for details.
+      # gcloud builds submit's default (synchronous) mode streams build logs client-side,
+      # which requires the caller to be project Viewer/Owner (to read the default Cloud
+      # Build GCS logs bucket) -- github-actions-deploy@ isn't, and holds no Cloud Logging
+      # read role either, so that streaming/polling exits 1 with "This tool can only stream
+      # logs if you are Viewer/Owner of the project" even though the build itself succeeds
+      # every time (confirmed via `gcloud builds describe` on builds that reached SUCCESS
+      # and pushed the image). `--suppress-logs` does not avoid this -- gcloud still needs
+      # read access to determine the build's outcome. Rather than grant a new IAM role,
+      # decouple submission from status-checking: `--async` returns as soon as the build is
+      # created (no log streaming at all), then poll `gcloud builds describe` for terminal
+      # status -- an operation the SA's existing cloudbuild.builds.editor role already
+      # covers.
       - name: Build and push backend image
         run: |
-          gcloud builds submit \
+          set -euo pipefail
+
+          BUILD_ID="$(gcloud builds submit \
             --project "$GCP_PROJECT_ID" \
-            --config ./cloudbuild-backend.yaml \
-            --substitutions "_BACKEND_IMAGE=$BACKEND_IMAGE" \
-            ./backend
+            --tag "$BACKEND_IMAGE" \
+            --async \
+            --format='value(id)' \
+            ./backend)"
+
+          if [[ -z "$BUILD_ID" ]]; then
+            echo "::error::'gcloud builds submit --async' did not return a build ID"
+            exit 1
+          fi
+
+          echo "Cloud Build started: $BUILD_ID"
+          echo "Console logs: https://console.cloud.google.com/cloud-build/builds/$BUILD_ID?project=$GCP_PROJECT_ID"
+
+          POLL_INTERVAL_SECONDS=10
+          TIMEOUT_SECONDS=1800
+          elapsed=0
+          status="$(gcloud builds describe "$BUILD_ID" --project "$GCP_PROJECT_ID" --format='value(status)')"
+
+          while [[ "$status" != "SUCCESS" && "$status" != "FAILURE" && "$status" != "TIMEOUT" && "$status" != "CANCELLED" && "$status" != "EXPIRED" ]]; do
+            if (( elapsed >= TIMEOUT_SECONDS )); then
+              echo "::error::Timed out after ${TIMEOUT_SECONDS}s waiting for Cloud Build $BUILD_ID (last status: $status). See https://console.cloud.google.com/cloud-build/builds/$BUILD_ID?project=$GCP_PROJECT_ID"
+              exit 1
+            fi
+            sleep "$POLL_INTERVAL_SECONDS"
+            elapsed=$((elapsed + POLL_INTERVAL_SECONDS))
+            status="$(gcloud builds describe "$BUILD_ID" --project "$GCP_PROJECT_ID" --format='value(status)')"
+            echo "Build $BUILD_ID status: $status (${elapsed}s elapsed)"
+          done
+
+          if [[ "$status" != "SUCCESS" ]]; then
+            echo "::error::Cloud Build $BUILD_ID finished with status $status (expected SUCCESS). See https://console.cloud.google.com/cloud-build/builds/$BUILD_ID?project=$GCP_PROJECT_ID"
+            exit 1
+          fi
+
+          echo "Cloud Build $BUILD_ID succeeded."
 
       # Both Cloud Tasks queues (care-plan-jobs, care-plan-jobs-trial) already exist in
       # juno-medical-clarity from main Juno's setup -- this workflow deliberately does NOT
