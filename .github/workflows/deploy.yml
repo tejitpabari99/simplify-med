@@ -125,11 +125,18 @@ jobs:
       - name: Select GCP project
         run: gcloud config set project "$GCP_PROJECT_ID"
 
+      # --suppress-logs: the deploy SA can run Cloud Build but isn't project Viewer/Owner,
+      # so it can't stream logs from the default Cloud Build logs bucket. Without this flag
+      # gcloud fails with "This tool can only stream logs if you are Viewer/Owner of the
+      # project" even when the build itself succeeds. Suppressing log streaming makes gcloud
+      # poll build status via the Cloud Build API instead, which the SA's existing role
+      # already permits, and it still exits non-zero on a genuine build failure.
       - name: Build and push backend image
         run: |
           gcloud builds submit \
             --project "$GCP_PROJECT_ID" \
             --tag "$BACKEND_IMAGE" \
+            --suppress-logs \
             ./backend
 
       # Both Cloud Tasks queues (care-plan-jobs, care-plan-jobs-trial) already exist in
