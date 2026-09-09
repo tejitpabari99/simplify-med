@@ -116,8 +116,11 @@ takeover) — nothing further is required:
    other half, and it *is* applied automatically on every deploy (see below).
 
 Both Cloud Tasks queues this section used to describe as auto-created already exist
-(`care-plan-jobs`, `care-plan-jobs-trial`) — inherited from the previous app. The deploy
-workflow does not create either; it only verifies the trial queue it uses is present.
+(`care-plan-jobs`, `care-plan-jobs-trial`) — inherited from the previous app and managed
+outside this workflow. The deploy workflow deliberately neither creates nor inspects either
+queue: at runtime it's the Cloud Run runtime service account (default compute), not the
+deploy service account, that enqueues tasks, so the deploy service account intentionally
+holds no Cloud Tasks IAM permissions.
 
 ## Firestore rules on a shared database
 
@@ -132,16 +135,15 @@ Deploying this repo's rules does not remove access to anything the running app n
 
 ## How the deploy workflow works
 
-Trigger: a `workflow_run` event on the `CI` workflow completing successfully on `main`,
-or a manual `workflow_dispatch`. This means an automatic deploy only happens after CI
-has actually passed against the exact commit being deployed. A concurrency group
+Trigger: a direct `push` to `main`, or a manual `workflow_dispatch`. Deploy runs on every
+push to `main` independently of the `CI` workflow — it no longer waits on, or depends on the
+outcome of, CI passing. (`ci.yml` still runs lint/type-check/test/build on its own on every
+push and pull request to `main`; it just no longer gates this deploy.) A concurrency group
 prevents overlapping production deploys.
 
 1. **Build.** One container image is built from `backend/` via Cloud Build and pushed to
    Artifact Registry (`juno` repo, `simplify-backend` image).
-2. **Verify the Cloud Tasks trial queue exists** (`care-plan-jobs-trial`) — read-only check;
-   the workflow does not create either queue, since both already exist.
-3. **Deploy both Cloud Run services from that one image**, distinguished by the
+2. **Deploy both Cloud Run services from that one image**, distinguished by the
    `SERVICE_MODE` environment variable:
    - `juno-worker` — `SERVICE_MODE=worker`, `--no-allow-unauthenticated`, `--ingress=internal`.
    - `juno-api` — `SERVICE_MODE=api`, `--allow-unauthenticated`.
@@ -164,21 +166,21 @@ prevents overlapping production deploys.
    `GCP_LOCATION` is set to `global` (not `GCP_REGION`), matching what was already running
    live in production for both services, rather than switching Vertex AI's endpoint to a
    regional one as part of an unrelated infra change.
-4. **Deploy the retention Cloud Run Job** (`juno-trial-anon-cleanup`, running
+3. **Deploy the retention Cloud Run Job** (`juno-trial-anon-cleanup`, running
    `scripts/cleanup_anonymous_users.py`) and **ensure its daily Cloud Scheduler trigger**
    (`juno-trial-anon-cleanup-daily`) **exists** (idempotent update-or-create), targeting the
    Cloud Run Job's `:run` API via an OAuth-authenticated service account
    (`juno-scheduler-invoker@`).
-5. **Apply the Cloud Storage lifecycle rule** on the upload bucket. The bucket is shared with
+4. **Apply the Cloud Storage lifecycle rule** on the upload bucket. The bucket is shared with
    the previous app, which already had a rule protecting its own `care_plan_trial/` prefix;
    since `gcloud storage buckets update --lifecycle-file` replaces the entire rule set, this
    step always writes both prefixes (`care_plan_inputs/` for this app, `care_plan_trial/` for
    the previous app) so neither loses retention coverage.
-6. **Build and deploy the frontend**: `npm ci`, `npm run build` (with the `VITE_*` secrets
+5. **Build and deploy the frontend**: `npm ci`, `npm run build` (with the `VITE_*` secrets
    injected at build time), deploy Firestore security rules, then deploy to Firebase Hosting
    site `juno-medical-clarity` (see `firebase.json`'s `hosting.site` key) — the same site that
    served the previous app's live frontend.
-7. **Tag the release.** On success, a `prod-<timestamp>` git tag is created and pushed
+6. **Tag the release.** On success, a `prod-<timestamp>` git tag is created and pushed
    against the deployed commit, marking a known-good production state.
 
 ## Preview deployments

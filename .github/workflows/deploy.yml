@@ -58,8 +58,9 @@
 #     app's zero-retention design; the GCS lifecycle rule below is the other half and IS applied
 #     by this workflow on every deploy.
 #   - Both Cloud Tasks queues (care-plan-jobs, care-plan-jobs-trial) already exist from main
-#     Juno's setup. This workflow does not create either — see the trial-queue-only sanity
-#     check below.
+#     Juno's setup and are managed outside this workflow. This workflow deliberately neither
+#     creates nor inspects either queue, and the deploy service account intentionally holds
+#     no Cloud Tasks permissions.
 #
 # Two known, deliberate departures from a "clean slate" simplify-* deploy, called out here so
 # they're easy to find and revisit:
@@ -80,9 +81,7 @@
 name: Deploy
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  push:
     branches: [main]
   workflow_dispatch:
 
@@ -97,9 +96,6 @@ concurrency:
 
 jobs:
   deploy-backend:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -111,7 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -180,16 +176,14 @@ jobs:
           echo "Cloud Build $BUILD_ID succeeded."
 
       # Both Cloud Tasks queues (care-plan-jobs, care-plan-jobs-trial) already exist in
-      # juno-medical-clarity from main Juno's setup -- this workflow deliberately does NOT
-      # create care-plan-jobs (it's the 500/s main queue and out of scope for this app). The
-      # guard below only confirms the trial queue this app actually enqueues onto is present,
-      # so a missing-queue misconfiguration fails loudly at deploy time instead of at
-      # request time in production.
-      - name: Verify Cloud Tasks trial queue exists
-        run: |
-          gcloud tasks queues describe care-plan-jobs-trial \
-            --location "$GCP_REGION" --project "$GCP_PROJECT_ID" \
-            > /dev/null
+      # juno-medical-clarity from main Juno's setup and are managed outside this workflow --
+      # this workflow deliberately neither creates nor inspects either queue (not
+      # care-plan-jobs, the 500/s main queue out of scope for this app, nor
+      # care-plan-jobs-trial, the queue this app enqueues onto). At runtime it's the Cloud Run
+      # runtime service account (default compute), not this deploy service account, that
+      # enqueues tasks -- so github-actions-deploy@ intentionally holds no Cloud Tasks IAM
+      # permissions, and a "verify queue exists" step here would only fail on
+      # cloudtasks.queues.get, not catch a real misconfiguration.
 
       # First-pass, bare deploys. These create the revision (or update its image) so both
       # services exist and juno-worker's URL can be read below. juno-worker's URL is stable
@@ -353,7 +347,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -420,12 +414,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Tag production deploy
         run: |
-          HEAD_SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          HEAD_SHA="${{ github.sha }}"
 
           git fetch --tags origin
           existing_tag=$(git tag --points-at "$HEAD_SHA" 'prod-*' | head -n 1)
