@@ -13,6 +13,7 @@ just save you a tiny bit of typing.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -63,6 +64,14 @@ class SimplifyContext:
         scope.add("care_plan_version", _g("care_plan_version"))
         scope.add("grading_version", _g("grading_version"))
         scope.add("input_version", _g("input_version"))
-        scope.add("service", _g("service") or "simplify-backend")
+        # "simplify-backend" hasn't been a real Cloud Run service since the app split
+        # into juno-api/juno-worker. K_SERVICE is set by Cloud Run to whichever of those
+        # is actually running, so prefer that (same idiom as observability/telemetry.py's
+        # resource "service.name"); SERVICE_NAME_DEFAULT is the last-resort fallback for
+        # non-Cloud-Run environments (e.g. local dev) where K_SERVICE isn't set.
+        scope.add(
+            "service",
+            _g("service") or os.getenv(Constants.EnvVars.K_SERVICE, Constants.Observability.SERVICE_NAME_DEFAULT),
+        )
         scope.add("environment", _g("environment") or "production")
         scope.add_many(self.extra)
