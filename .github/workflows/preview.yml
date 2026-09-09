@@ -14,7 +14,7 @@ name: Preview
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
 
 concurrency:
   group: preview-${{ github.event.number }}
@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   deploy-preview:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
       CHANNEL_ID: pr-${{ github.event.number }}
@@ -138,3 +138,92 @@ jobs:
             || gh pr comment "${{ github.event.number }}" \
               --repo "${{ github.repository }}" \
               --body "$body"
+
+  # Runs when a PR closes (merged or not) so its preview resources don't accumulate --
+  # three stale, hand-created-looking `simplify-backend-pr-<N>` Cloud Run services had to
+  # be deleted by hand before this job existed. Same fork restriction as deploy-preview
+  # (needs the same secrets); "if: always()" is deliberately NOT used here, so a
+  # forked-repo PR close is simply skipped rather than failing on missing secrets.
+  #
+  # Both deletions are scoped to THIS PR's own resources, derived only from
+  # github.event.pull_request.number, and each has a hard-coded guard that refuses to
+  # touch the production Cloud Run services (juno-api / juno-worker) or the live Hosting
+  # channel even if the naming ever collided. Both are idempotent: a describe-before-
+  # delete (Cloud Run) and a `|| true` (Hosting, which also auto-expires channels after 7
+  # days per the --expires 7d above, so a no-op here is expected and fine).
+  teardown-preview:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CHANNEL_ID: pr-${{ github.event.number }}
+      BACKEND_SERVICE: simplify-backend-pr-${{ github.event.number }}
+    steps:
+      # google-github-actions/auth + setup-gcloud, same as deploy.yml's gcloud steps --
+      # this is the repo's one established gcloud auth mechanism, reused here rather than
+      # inventing a second one. preview.yml itself never deploys a per-PR backend (see the
+      # top-of-file note), so this step is a defensive no-op in the common case -- it only
+      # matters if a `simplify-backend-pr-<N>` service exists at all (e.g. left over from
+      # manual testing, which is what actually happened before).
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Delete this PR's Cloud Run preview service, if any
+        run: |
+          set -u
+
+          # Hard guard: never let this delete a production service, no matter what
+          # BACKEND_SERVICE resolves to.
+          case "$BACKEND_SERVICE" in
+            juno-api|juno-worker)
+              echo "::error::Refusing to delete protected service '$BACKEND_SERVICE'"
+              exit 1
+              ;;
+          esac
+
+          if gcloud run services describe "$BACKEND_SERVICE" \
+              --region "${{ vars.GCP_REGION }}" \
+              --project "${{ vars.GCP_PROJECT_ID }}" >/dev/null 2>&1; then
+            gcloud run services delete "$BACKEND_SERVICE" \
+              --region "${{ vars.GCP_REGION }}" \
+              --project "${{ vars.GCP_PROJECT_ID }}" \
+              --quiet
+            echo "Deleted Cloud Run service $BACKEND_SERVICE"
+          else
+            echo "Cloud Run service $BACKEND_SERVICE does not exist; nothing to delete."
+          fi
+
+      # Same Firebase auth mechanism the "Deploy preview channel" step above uses: write
+      # the FIREBASE_SERVICE_ACCOUNT secret to a temp credentials file and point
+      # firebase-tools at it via GOOGLE_APPLICATION_CREDENTIALS.
+      - name: Delete this PR's Firebase Hosting preview channel, if any
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -u
+
+          # Hard guard: never let this touch the live channel, no matter what CHANNEL_ID
+          # resolves to.
+          if [ "$CHANNEL_ID" = "live" ]; then
+            echo "::error::Refusing to delete the live Hosting channel"
+            exit 1
+          fi
+
+          creds_file="$RUNNER_TEMP/firebase-service-account.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$creds_file"
+          export GOOGLE_APPLICATION_CREDENTIALS="$creds_file"
+          trap 'rm -f "$creds_file"' EXIT
+
+          # Channels also auto-expire 7 days after their last deploy (--expires 7d
+          # above), so a "channel not found" here is an expected, healthy outcome for
+          # any PR that sat open past that window -- not an error.
+          npx firebase-tools hosting:channel:delete "$CHANNEL_ID" \
+            --project juno-medical-clarity --only juno-medical-clarity --force \
+            || echo "Channel $CHANNEL_ID already gone or expired; nothing to delete."
