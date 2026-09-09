@@ -15,10 +15,10 @@ describe('PrivacyPage', () => {
   it('renders the approved Privacy Policy copy', () => {
     render(<MemoryRouter><PrivacyPage /></MemoryRouter>);
     expect(
-      screen.getByRole('heading', { name: /privacy policy — simplify/i })
+      screen.getByRole('heading', { name: /privacy policy for simplify/i })
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/do not upload real, identifiable patient health information \(phi\)/i)
+      screen.getByText(/isn't a HIPAA-covered service/i)
     ).toBeInTheDocument();
   });
 });

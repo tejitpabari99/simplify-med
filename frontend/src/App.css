@@ -34,6 +34,21 @@
   padding: 0;
 }
 
+/* Headings that receive scripted focus on mount for screen-reader announcement
+   (tabIndex={-1} keeps them out of normal Tab order, so this never affects
+   sighted keyboard navigation). Suppress the default focus box; keep a
+   focus-visible ring as a safety net for any genuine keyboard-driven focus. */
+h1[tabindex="-1"]:focus,
+h2[tabindex="-1"]:focus {
+  outline: none;
+}
+
+h1[tabindex="-1"]:focus-visible,
+h2[tabindex="-1"]:focus-visible {
+  outline: 2px solid var(--accent-violet);
+  outline-offset: 4px;
+}
+
 html {
   scroll-behavior: smooth;
 }
@@ -693,5 +708,104 @@ body {
 
   .file-card-name {
     font-size: 0.85rem;
+  }
+}
+
+/* ============================================================
+   Legal pages (Privacy Policy, Terms & Conditions)
+   ============================================================ */
+.legal-page {
+  max-width: 70ch;
+  margin: 0 auto;
+  padding: 48px 24px 80px;
+  color: var(--text-primary);
+  line-height: 1.6;
+  font-size: 1rem;
+}
+
+.legal-page .back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 32px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+}
+
+.legal-page .back-button:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent-violet);
+  color: var(--accent-violet-dark);
+  transform: translateY(-1px);
+}
+
+.legal-page .back-button:focus-visible {
+  outline: 2px solid var(--accent-violet);
+  outline-offset: 2px;
+}
+
+.legal-page .back-button-arrow {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.legal-page article h1 {
+  font-size: 1.9rem;
+  line-height: 1.25;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+}
+
+.legal-page article > p:first-of-type {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin: 0 0 32px;
+}
+
+.legal-page article h2 {
+  font-size: 1.25rem;
+  margin: 40px 0 12px;
+  color: var(--text-primary);
+}
+
+.legal-page article p {
+  margin: 0 0 16px;
+  color: var(--text-secondary);
+}
+
+.legal-page article ul {
+  margin: 0 0 16px;
+  padding-left: 1.4em;
+}
+
+.legal-page article li {
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+}
+
+.legal-page article li:last-child {
+  margin-bottom: 0;
+}
+
+.legal-page article strong {
+  color: var(--text-primary);
+}
+
+@media (max-width: 600px) {
+  .legal-page {
+    padding: 32px 16px 64px;
+  }
+  .legal-page article h1 {
+    font-size: 1.5rem;
+  }
+  .legal-page article h2 {
+    font-size: 1.1rem;
   }
 }

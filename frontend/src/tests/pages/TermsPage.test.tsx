@@ -15,7 +15,7 @@ describe('TermsPage', () => {
   it('renders the approved Terms & Conditions copy, including the rate limit', () => {
     render(<MemoryRouter><TermsPage /></MemoryRouter>);
     expect(
-      screen.getByRole('heading', { name: /terms & conditions — simplify/i })
+      screen.getByRole('heading', { name: /terms & conditions for simplify/i })
     ).toBeInTheDocument();
     expect(screen.getByText(/currently 5 per hour, subject to change without notice/i)).toBeInTheDocument();
   });
