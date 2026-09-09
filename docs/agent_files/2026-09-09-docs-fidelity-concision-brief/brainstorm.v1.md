@@ -32,7 +32,7 @@ For: someone who wants to upload their own document and see it simplified. There
 | Decision | Alternative rejected | Why |
 |---|---|---|
 | Delete forced-inference rules 4, 5, 9, 10 from `structure_note.txt` | Keep them; rely on the reviewer to catch fabrication | They are the direct cause. Rule 1 ("use only information found in the source") and rule 4 ("every medication must have a 'why'") cannot both be satisfied by a note that never states why. |
-| Remove clinically meaningful defaults: `WarningSign.urgency` and `CarePlan.urgency` become nullable; the `importance` field is deleted outright | Keep defaults, mark them "unverified" in the UI | A default is an affirmative claim the model never made. `DiagnosisDetail.severity` is already nullable and is the precedent. `importance` is a `HIGH`/`LOW` that defaults `LOW` on every item and has no remaining consumer once Next Steps orders by status. |
+| Remove clinically meaningful defaults: `WarningSign.urgency` becomes nullable; the `importance` field is deleted outright; `CarePlan.urgency` and `Diagnosis.main_conclusion` are deleted entirely (see 2.5) | Keep defaults, mark them "unverified" in the UI | A default is an affirmative claim the model never made. `DiagnosisDetail.severity` is already nullable and is the precedent. `importance` is a `HIGH`/`LOW` that defaults `LOW` on every item and has no remaining consumer once Next Steps orders by status. |
 | A fidelity review call compares the structured plan against the ORIGINAL note and emits field-level corrections only. It never rewrites. | Reviewer rewrites the output; reviewer only flags; a finding fails the job | A reviewer permitted to rewrite becomes a fourth author and reintroduces the drift it exists to catch. Failing the job costs the user their whole result over a nit. |
 | A separate LLM corrector applies the corrections, guided by the same style rules as the writer prompts | Deterministic patch application | Chosen by the user over the deterministic option. Correction ops are: (i) correct a wrong value (note says 500, output says 5000); (ii) replace an unsupported value with "not stated"; (iii) remove an unsupported item entirely. The boundary between (ii) and (iii) is deliberately loose — an unsupported dose becomes "not stated", an entirely invented side effect is removed. |
 | Where the note does not state something, render it explicitly: "Reason: not stated in your note" | Omit the row silently | Silence is indistinguishable from an oversight. An explicit "not stated" is the clearest possible signal that the tool does not invent, and it hands the patient a real question to ask. It also makes the failure mode visible during testing. |
@@ -82,6 +82,14 @@ The first draft kept the existing rewrite-then-extract ordering and patched its 
 | A recall experiment gates the build | Build the grounding step and measure recall from its output | The one axis on which the inverted architecture could lose is extraction recall on raw, dense, abbreviated clinical text versus on pre-simplified text. No published work measures this — it is a genuine gap in the field, not just unknown to us. Roughly a day of annotation plus two pipeline runs settles it, and the fixture set is work the deferred evaluation suite needs anyway. |
 | The recall experiment is an offline script over fixtures, not a deployed A/B | Compare via the PR preview environment | `preview.yml` deploys `frontend/` only, to a Firebase Hosting channel, and the preview build talks to the PRODUCTION backend — `juno-api`/`juno-worker` stay pointed at prod deliberately so an unreviewed PR cannot mutate the shared live project. Every change here is backend, so a preview link would run the old pipeline behind a new frontend. A UI (PM2 + ngrok against `SERVICE_MODE=combined`) is useful for judging whether output READS better, but recall cannot be measured by looking at rendered cards. |
 
+| Source provenance is carried by the deterministic unitizer, not by fields the model fills in: each unit is `{id, file, page, line, text}` and the model cites only `id` | Add `file` and `page` fields to each ledger fact | The extractors already compute this and throw it away — `resolve_uploaded_files` concatenates multiple files behind a plain-text `--- Source: {filename} ---` marker (`utils/misc.py:106`), and `extract_text_from_pdf` knows the page number inside its loop, logs it to debug, and joins pages with `"\n\n"` (`utils/pdf.py:20-30`). Recovering file and page by lookup costs no output tokens and cannot be hallucinated. The plain-text source markers become redundant in model-facing text. |
+| Every category passed to the grounding step carries explicit criteria AND a boundary rule, not just a name (see 3.3) | Category names alone, as today | The contrast-dye misclassification was a definitional failure: the structuring prompt supplies a JSON schema and zero definitions. Naming the categories without defining their edges reproduces the bug for every ambiguous item, not just that one. |
+| Care-plan fields are split three ways — extracted (grounded 1:1 to ledger facts), derived (computed from the assembled whole), generated (not from the note at all) — and only the extracted set forms the grounding checklist | Treat every schema field as extractable | `summary` is not a category and cannot be grounded to one fact; `questions` are by definition things the note does NOT say. Conflating these with extracted content either forces fabrication or makes coverage checking incoherent. |
+| `summary` is the ONLY derived field, and it cites the set of fact IDs it was built from | Exempt derived fields from review; check them against the whole ledger | Citing its source set turns the hardest field to verify into the easiest: the reviewer checks that each cited fact supports what the summary says about it, and that nothing uncited crept in. Exempting it would leave the most-read card on the page as the only unchecked one. |
+| `Diagnosis.main_conclusion` is deleted | Keep it as a second derived prose field | It can be built from the rest, and once it can, it should not exist. `summary` delivers the headline and `diagnosis.details` carries the findings, so keeping it means a second derived field to verify for no additional information. |
+| `CarePlan.urgency` is deleted | Keep it nullable | A whole-document mood judgement with no single supporting fact and no consumer in the UI. `WarningSign.urgency` is unaffected — it is extracted (the note says "go to the emergency room"), stays nullable, and still drives sort order and badges. |
+| `questions` are freely generated, exempt from grounding, but constrained to interrogative form that asserts no new clinical claim; at most three, with no minimum | Derive questions only from fields that came back `not_stated`; drop the card; unconstrained free generation | Questions are the one genuinely generative element in the output — deriving them purely from gaps would make them mechanical. But "exempt from review" without a guard is a hole: "Should I be worried about my kidney function?" invents a concern the note never raised. The reviewer does not check grounding here; it checks that no clinical claim smuggled itself in as a premise. The old "generate exactly 3" rule is the same forced-inference bug as the rest — a complete note deserves zero questions. |
+
 ## 3. Design
 
 ### 3.1 Pipeline shape
@@ -110,9 +118,20 @@ CORRECT (LLM)            applies named corrections only; PII scrub              
 
 Four sequential LLM calls — one fewer than the superseded design and one more than the three running today. Glossary curation runs on a background thread, reusing the `ThreadPoolExecutor` pattern already at `care_plan_pipeline.py:51`, because it depends only on the detected terms and not on anything the reviewer produces.
 
-### 3.2 Line numbering (deterministic)
+### 3.2 Unitization (deterministic)
 
-Before grounding, the original text is split into numbered units by our own code, not by the model. These IDs are the authoritative binding for evidence: the model selects an ID rather than reproducing text, which is a materially easier task and cannot be corrupted by OCR noise in the way exact-string reproduction can.
+Before grounding, our own code — not the model — splits the input into numbered units:
+
+```
+{ id: 47, file: "cardiology-note.pdf", page: 2, line: 14,
+  text: "Pt to cont. metoprolol 25mg BID; f/u cards 4/12." }
+```
+
+Both extractors already have this data and currently discard it. `resolve_uploaded_files` concatenates every uploaded file into one blob behind a plain-text `--- Source: {filename} ---` marker (`services/care_plan_input.py:308`, `utils/misc.py:106`), so file identity survives only as prose the model has to notice. `extract_text_from_pdf` knows the page number inside its loop, logs it at debug level, and joins pages with `"\n\n"` (`utils/pdf.py:20-30`), so page boundaries are computed and then thrown away.
+
+The model cites one integer. File and page are recovered by lookup, which costs no output tokens and cannot be hallucinated — strictly better than asking the model to fill in `file` and `page` fields we would have no way to check. Once units carry file identity, the plain-text source markers are redundant in model-facing text.
+
+For images, one image is one unit source at `page: 1`; a multi-image upload gives each image its own file identity, which it does not currently have.
 
 ### 3.3 Grounding
 
@@ -120,7 +139,22 @@ Input: the line-numbered original, plus the deterministic abbreviation list from
 
 Output: a flat ledger. Each entry carries a category tag drawn from the care-plan taxonomy, a line ID, a verbatim quote, and the fact's content at clause granularity.
 
-The prompt presents the categories as an explicit checklist — medications, tests, procedures, instructions, follow-ups, warning signs, diagnoses, reason for visit — because a checklist is a recall aid in a way that open-ended "extract the facts" is not.
+The prompt presents the categories as an explicit checklist, each with criteria AND a boundary rule — a name alone reproduces the contrast-dye failure for every ambiguous item:
+
+| Category | Criteria | Boundary rule |
+|---|---|---|
+| `reason_for_visit` | Why the patient presented — complaint, symptom, or referral reason | Not the diagnosis. What they came *with*, not what was *found*. |
+| `diagnosis.details` | Conditions, findings and interpretations the clinician recorded | Includes imaging and lab findings stated as conclusions. Excludes the raw measurement, which belongs to the test. |
+| `medications` | Substances the patient takes **themselves, at home** | Anything administered *during* a test or procedure belongs to that item. This is the contrast-dye rule. |
+| `tests` | Diagnostic investigations — labs, imaging, tracings | Both already performed and newly ordered; `status` distinguishes them. |
+| `procedures` | Interventions performed **on** the patient | Carries any substance administered during it. |
+| `other` | Instructions that are none of the above — diet, activity, wound care, self-monitoring | If it has a date or an appointment, it is `follow_up`. |
+| `follow_up` | A future appointment or contact, with timing | Not a general instruction. Must involve seeing or contacting someone. |
+| `warning_signs` | Symptoms the note tells the patient to watch for | Must come with what to do, from the note. Not a side effect merely listed. |
+
+Every fact gets exactly one category; where two could apply, the boundary rules decide.
+
+`low_priority` is deliberately absent from this list. It is a priority judgement made at assembly — normal results, routine findings, administrative detail — not a clinical type the grounder can see.
 
 Two deterministic checks run immediately: every cited line ID must exist, and every quote must be a substring of the line it cites. A failure means fabricated evidence, detected with certainty and without a model.
 
@@ -135,6 +169,8 @@ It does four things and nothing else:
 3. Renders each field in plain language — `"BID"` becomes `"twice a day"`.
 4. Writes `summary` from the assembled whole.
 
+`summary` is the only derived field in the schema, and it carries the set of fact IDs it was built from so the reviewer can check it. `questions` are generated rather than extracted: at most three, no minimum, interrogative form only, and they may not assert a clinical claim the ledger does not already carry. `low_priority` is assigned here, not by the grounder — it is a priority judgement over already-categorised facts.
+
 The content rules from the deleted prose prompts relocate here: active voice, address the patient as "you", one idea per sentence, no fabricated numbers, no added urgency, no new medical advice, and the extended PII rule covering all person and facility names. So does the near-duplicate merge rule, which must preserve every variant explicitly ("your left and right heart arteries", never "your heart arteries"), and the section-boundary definitions — `medications` means things you take home and take yourself; anything administered during a test or procedure belongs to that item.
 
 Because rendering is field-level, no whole-document rewrite exists anywhere in the pipeline. `summary` is the single exception and is generated from structure, not from the note.
@@ -146,6 +182,8 @@ Input: the ledger and the assembled care plan. Two jobs:
 **Fidelity** — nothing in the output that its fact does not support. Emits field-level corrections only, never prose. Three operations: `correct` (the output contradicts its evidence — supply the right value), `not_stated` (the output asserts something the evidence does not support), `remove` (an item with no support at all).
 
 **Coverage** — shaped as enumerate-then-check-presence: for each ledger fact, does it appear in the output, yes or no. This shape is mandatory. Open-ended "is anything missing" review performs at near chance.
+
+**Derived and generated fields** are checked differently. `summary` is verified against the specific fact IDs it cites — each cited fact must support what the summary says about it, and nothing uncited may appear. `questions` are exempt from grounding by design, but are checked for smuggled clinical claims: a question may presuppose only what the ledger already establishes.
 
 The reviewer does not adjudicate which section an item belongs in; that is the render step's job, and loading taxonomy onto the reviewer dilutes the one thing it is for.
 
@@ -169,8 +207,10 @@ Two final non-model checks: every ledger fact maps to something in the output (a
 ### 3.9 Schema changes
 
 - `CarePlan.additional_info` — deleted.
-- `CarePlan.urgency` — nullable, no default.
-- `WarningSign.urgency` — nullable, no default.
+- `CarePlan.urgency` — deleted (derived whole-document judgement, no consumer).
+- `Diagnosis.main_conclusion` — deleted (buildable from `summary` plus `diagnosis.details`).
+- `WarningSign.urgency` — nullable, no default. Extracted, not derived; still drives sort order and badges.
+- `summary` — carries the set of fact IDs it was built from.
 - `importance` — deleted from every model that carries it.
 - `source` enum — deleted from all models.
 - `status: Literal["to_do", "done"]` — added and REQUIRED on `Medication`, `Test`, `Procedure`, `OtherInstruction`, `FollowUp`.
@@ -210,3 +250,5 @@ The evidence ledger is NOT displayed. It exists to make grounding and coverage c
 | The common-word stoplist may strip a term that is jargon in clinical context. | Diff the pruned dictionary against the full one and read the removals once, by hand. |
 | No test in the repo checks clinical fidelity today; every decision above is unguarded until the deferred suite exists. | Accepted deliberately. Intended fixtures: medication started vs considered; treatment accepted vs declined; "no evidence of X" vs "X"; possible vs confirmed diagnosis; changed vs unchanged dose; return precautions with exact urgency; conflicting notes; missing medication purpose; "no restriction documented" vs affirmative clearance; OCR decimal and unit errors. Deterministic assertions, not an LLM judge. |
 | Attribution research is almost entirely on clean digital text (Wikipedia, PubMed abstracts, clean EHR exports), not OCR'd scans with realistic noise. The line-ID approach is reasoned from that literature, not validated on our input distribution. | Inject realistic OCR noise into a handful of notes and compare how often line-ID, offset and quote-only attribution still resolve to the right source line. Half a day. |
+| `questions` are the single ungrounded surface in the output. The interrogative-form guard is reasoned, not tested. | Fixture set of notes with known gaps; assert no question presupposes a clinical fact absent from the ledger. |
+| Requiring `summary` to cite its fact IDs may degrade summary quality, or the model may cite loosely without the citations meaning anything. | Compare summaries generated with and without the citation requirement on the same notes; separately, spot-check whether cited facts actually support the sentences they are attached to. |
