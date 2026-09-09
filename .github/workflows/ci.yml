@@ -57,8 +57,15 @@ jobs:
         run: npm ci
         working-directory: frontend
 
+      # Plain `tsc --noEmit` is a no-op here: frontend/tsconfig.json is solution-style
+      # (`"files": []`, only project references), so without `-b` tsc resolves zero
+      # source files and exits 0 regardless of type errors. `-b` follows the
+      # references (tsconfig.app.json + tsconfig.node.json, same as `npm run build`'s
+      # `tsc -b`) so this step actually type-checks src/; `--noEmit` overrides both
+      # referenced projects' emit so this only writes .tsbuildinfo caches under
+      # node_modules/.tmp (gitignored), never dist/ output.
       - name: Type-check
-        run: npx tsc --noEmit
+        run: npx tsc -b --noEmit
         working-directory: frontend
 
       - name: Lint

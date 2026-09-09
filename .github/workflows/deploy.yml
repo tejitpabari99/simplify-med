@@ -1,12 +1,23 @@
-# Deploy — builds the backend image, deploys the two Cloud Run services
-# (simplify-api, simplify-worker), the retention Cloud Run Job + Cloud
-# Scheduler trigger, and the frontend to Firebase Hosting.
+# Deploy — builds the backend image and redeploys it onto the EXISTING, shared
+# juno-medical-clarity infrastructure: Cloud Run services `juno-api` and
+# `juno-worker`, the `juno-trial-anon-cleanup` Cloud Run Job + its
+# `juno-trial-anon-cleanup-daily` Cloud Scheduler trigger, and the live Firebase
+# Hosting default site (`juno-medical-clarity`). This is a takeover, not a
+# fresh stand-up: this repo's code now runs on resources that used to run
+# main Juno's backend. Main Juno's own API routes are retired for good (its
+# frontend was never released) — only this repo's `/jobs` blueprint is served
+# from here on.
+#
+# Both services still run one container image, distinguished by SERVICE_MODE
+# (this repo's contract — juno's own code used JUNO_MODE, which no longer
+# applies to anything deployed by this workflow).
 #
 # Required GitHub Actions secrets:
 #   GCP_SA_KEY                    JSON key for a GCP service account that can run Cloud Build,
-#                                  deploy/update Cloud Run services and jobs, manage Cloud Tasks
-#                                  queues, manage Cloud Scheduler jobs, and update GCS bucket
-#                                  lifecycle rules on GCP_BUCKET_NAME.
+#                                  deploy/update Cloud Run services and jobs, manage Cloud
+#                                  Scheduler jobs, and update GCS bucket lifecycle rules on
+#                                  GCP_BUCKET_NAME. (No Cloud Tasks queue-create permission is
+#                                  required — both queues used here already exist.)
 #   FIREBASE_SERVICE_ACCOUNT      Firebase Admin SDK service-account JSON (used by firebase-tools
 #                                  to deploy Firestore rules and Hosting).
 #   RATE_LIMIT_SALT               Secret salt for hashing client IPs in the per-IP rate limiter
@@ -17,32 +28,54 @@
 #   VITE_FIREBASE_STORAGE_BUCKET
 #   VITE_FIREBASE_MESSAGING_SENDER_ID
 #   VITE_FIREBASE_APP_ID
-#   VITE_API_PROCESSING_URL       Public base URL of the deployed simplify-api Cloud Run service,
-#                                  baked into the frontend build.
+#   VITE_API_PROCESSING_URL       Public base URL of the deployed juno-api Cloud Run service
+#                                  (https://juno-api-tmvzwqeigq-uc.a.run.app), baked into the
+#                                  frontend build.
 #
 # Required GitHub Actions variables:
-#   GCP_PROJECT_ID                 GCP project to deploy into.
+#   GCP_PROJECT_ID                 GCP project to deploy into (juno-medical-clarity).
 #   GCP_REGION                     Cloud Run / Artifact Registry / Vertex AI region, e.g. "us-central1".
-#   GCP_BUCKET_NAME                GCS bucket used for uploaded input files.
-#   GCP_ARTIFACT_REPO              Artifact Registry repository name to push the backend image to.
-#   API_MAX_INSTANCES              Optional. Max Cloud Run instances for simplify-api (default "10").
-#   WORKER_MAX_INSTANCES           Optional. Max Cloud Run instances for simplify-worker (default "5").
+#   GCP_BUCKET_NAME                GCS bucket used for uploaded input files (juno-medical-clarity-backend).
+#   GCP_ARTIFACT_REPO              Artifact Registry repository name to push the backend image to (juno).
+#   API_MAX_INSTANCES              Optional. Max Cloud Run instances for juno-api (default "10").
+#   WORKER_MAX_INSTANCES           Optional. Max Cloud Run instances for juno-worker (default "5").
 #
-# One-time manual GCP setup this workflow assumes already exists (deliberately not automated
-# here — infrequent, and safer as an explicit human action, matching this app's retention
-# design; see CONTRIBUTING.md):
-#   - Artifact Registry repository named GCP_ARTIFACT_REPO in GCP_REGION.
-#   - IAM service accounts simplify-worker-invoker@<project>.iam.gserviceaccount.com and
-#     simplify-scheduler-invoker@<project>.iam.gserviceaccount.com, each granted only the
-#     roles they need (run.invoker on the relevant service/job).
-#   - A Secret Manager secret named "firebase-service-account" holding the same Firebase Admin
-#     SDK JSON as the FIREBASE_SERVICE_ACCOUNT secret above, readable by the Cloud Run runtime
-#     service account.
-#   - A native Firestore TTL policy enabled on care_plan_outputs.expires_at (the job/output
-#     collection) and rate_limits.expires_at (`gcloud firestore fields ttls update expires_at
-#     --collection-group=<name> --database="(default)" --enable-ttl`, run once per collection)
-#     — this is the backstop half of this app's zero-retention design; the GCS lifecycle rule
-#     below is the other half and IS applied by this workflow on every deploy.
+# One-time manual GCP setup this workflow assumes already exists — and which is verified
+# already done on juno-medical-clarity as of this takeover, so nothing further is required
+# here:
+#   - Artifact Registry repository "juno" in GCP_REGION (already exists; holds the
+#     `simplify-backend` image, shared with what used to be main Juno's backend image).
+#   - IAM service accounts juno-worker-invoker@<project>.iam.gserviceaccount.com and
+#     juno-scheduler-invoker@<project>.iam.gserviceaccount.com already exist and already carry
+#     the run.invoker grants this app needs (they are the same accounts main Juno used — no
+#     simplify-worker-invoker/simplify-scheduler-invoker accounts are created or referenced).
+#   - The Secret Manager secret "firebase-service-account" already exists and is already
+#     readable by the Cloud Run runtime service account.
+#   - Native Firestore TTL policies are enabled on care_plan_outputs.expires_at and
+#     rate_limits.expires_at (`gcloud firestore fields ttls update expires_at
+#     --collection-group=<name> --database="(default)" --enable-ttl`, run once per collection;
+#     rate_limits' TTL was enabled as part of this takeover). This is the backstop half of this
+#     app's zero-retention design; the GCS lifecycle rule below is the other half and IS applied
+#     by this workflow on every deploy.
+#   - Both Cloud Tasks queues (care-plan-jobs, care-plan-jobs-trial) already exist from main
+#     Juno's setup. This workflow does not create either — see the trial-queue-only sanity
+#     check below.
+#
+# Two known, deliberate departures from a "clean slate" simplify-* deploy, called out here so
+# they're easy to find and revisit:
+#   1. --min-instances=0 on juno-api. juno-api ran at --min-instances=1 in production before
+#      this takeover (no cold starts on the live site). This repo's design goal is zero
+#      idle cost, so this workflow deploys at min-instances=0 as stated below — but that IS a
+#      behavior change on a site with existing traffic: the first request after an idle period
+#      now pays a cold-start penalty it didn't pay before. Flip API_MIN_INSTANCES-equivalent
+#      back to 1 (edit the `--min-instances` flags below) if that regression isn't acceptable.
+#   2. GCP_LOCATION stays "global", not GCP_REGION. juno-api/juno-worker currently run Vertex AI
+#      calls against location "global" in production (confirmed via `gcloud run services
+#      describe`), not the regional "us-central1" endpoint. Since VERTEX_AI_MODEL
+#      (gemini-3.5-flash) is already confirmed live and working at that location, this workflow
+#      preserves GCP_LOCATION=global rather than silently switching Vertex AI's endpoint to
+#      GCP_REGION -- the same "don't silently change a known-working model/endpoint config"
+#      judgment call applied to VERTEX_AI_MODEL itself.
 
 name: Deploy
 
@@ -99,22 +132,31 @@ jobs:
             --tag "$BACKEND_IMAGE" \
             ./backend
 
-      - name: Ensure Cloud Tasks queue exists
+      # Both Cloud Tasks queues (care-plan-jobs, care-plan-jobs-trial) already exist in
+      # juno-medical-clarity from main Juno's setup -- this workflow deliberately does NOT
+      # create care-plan-jobs (it's the 500/s main queue and out of scope for this app). The
+      # guard below only confirms the trial queue this app actually enqueues onto is present,
+      # so a missing-queue misconfiguration fails loudly at deploy time instead of at
+      # request time in production.
+      - name: Verify Cloud Tasks trial queue exists
         run: |
-          gcloud tasks queues create care-plan-jobs \
+          gcloud tasks queues describe care-plan-jobs-trial \
             --location "$GCP_REGION" --project "$GCP_PROJECT_ID" \
-            --max-concurrent-dispatches=5 --max-dispatches-per-second=2 \
-            || echo "queue already exists — continuing"
+            > /dev/null
 
-      # First-pass, bare deploys. Only these two flags matter here: they create the
-      # revision (or update its image) so the two services exist and simplify-worker's
-      # URL can be read below. Both services use --min-instances=0 -- the source
-      # cloudbuild.yaml this was adapted from deployed the API service with
-      # --min-instances=1, contradicting this project's stated zero-idle-cost design;
-      # that inconsistency is deliberately NOT carried over here.
-      - name: Deploy simplify-worker (bare, first pass)
+      # First-pass, bare deploys. These create the revision (or update its image) so both
+      # services exist and juno-worker's URL can be read below. juno-worker's URL is stable
+      # across deploys (https://juno-worker-tmvzwqeigq-uc.a.run.app) but it's still read back
+      # live rather than hardcoded, since a bare deploy is required anyway to update the image.
+      #
+      # juno-api deploys at --min-instances=0 here, per this repo's stated zero-idle-cost
+      # design -- see the "known departures" note at the top of this file: juno-api ran at
+      # --min-instances=1 in production before this takeover, so this is a real behavior
+      # change (cold starts on the live site), kept here because it matches this repo's
+      # explicit design intent, not because it was overlooked.
+      - name: Deploy juno-worker (bare, first pass)
         run: |
-          gcloud run deploy simplify-worker \
+          gcloud run deploy juno-worker \
             --image="$BACKEND_IMAGE" \
             --region="$GCP_REGION" \
             --platform=managed \
@@ -126,9 +168,9 @@ jobs:
             --memory=2Gi \
             --timeout=900
 
-      - name: Deploy simplify-api (bare, first pass)
+      - name: Deploy juno-api (bare, first pass)
         run: |
-          gcloud run deploy simplify-api \
+          gcloud run deploy juno-api \
             --image="$BACKEND_IMAGE" \
             --region="$GCP_REGION" \
             --platform=managed \
@@ -139,15 +181,23 @@ jobs:
             --memory=2Gi \
             --timeout=300
 
-      - name: Configure simplify-api env vars and secrets
+      # Second pass: full env/secret update. Uses --set-env-vars (which REPLACES the entire
+      # env-var set), not --update-env-vars (which merges), deliberately: juno-api is carrying
+      # over stale env vars from main Juno's own deploys (JUNO_MODE, CLOUD_TASKS_QUEUE_TRIAL,
+      # TRIAL_RATE_LIMIT_SALT) that this repo's code contract doesn't read and doesn't want
+      # lingering on a service it now owns. --set-env-vars wipes those out in the same step
+      # that sets the vars this repo's code actually reads. CLOUD_TASKS_QUEUE is pointed at
+      # the trial queue (care-plan-jobs-trial), not the 500/s main queue (care-plan-jobs) --
+      # this app's traffic is trial-tier and belongs on the low-rate queue.
+      - name: Configure juno-api env vars and secrets
         run: |
-          WORKER_URL=$(gcloud run services describe simplify-worker \
+          WORKER_URL=$(gcloud run services describe juno-worker \
             --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
             --format='value(status.url)')
 
-          API_ENV_VARS="GCP_PROJECT_ID=$GCP_PROJECT_ID,GCP_BUCKET_NAME=$GCP_BUCKET_NAME,GCP_LOCATION=$GCP_REGION,VERTEX_AI_MODEL=gemini-3.5-flash,FIRESTORE_DATABASE_ID=(default),CLOUD_TASKS_QUEUE=projects/$GCP_PROJECT_ID/locations/$GCP_REGION/queues/care-plan-jobs,WORKER_URL=$WORKER_URL,WORKER_SERVICE_ACCOUNT=simplify-worker-invoker@$GCP_PROJECT_ID.iam.gserviceaccount.com,RATE_LIMIT_SALT=${{ secrets.RATE_LIMIT_SALT }}"
+          API_ENV_VARS="GCP_PROJECT_ID=$GCP_PROJECT_ID,GCP_BUCKET_NAME=$GCP_BUCKET_NAME,GCP_LOCATION=global,VERTEX_AI_MODEL=gemini-3.5-flash,FIRESTORE_DATABASE_ID=(default),SERVICE_MODE=api,CLOUD_TASKS_QUEUE=projects/$GCP_PROJECT_ID/locations/$GCP_REGION/queues/care-plan-jobs-trial,WORKER_URL=$WORKER_URL,WORKER_SERVICE_ACCOUNT=juno-worker-invoker@$GCP_PROJECT_ID.iam.gserviceaccount.com,RATE_LIMIT_SALT=${{ secrets.RATE_LIMIT_SALT }}"
 
-          gcloud run services update simplify-api \
+          gcloud run services update juno-api \
             --region "$GCP_REGION" \
             --project "$GCP_PROJECT_ID" \
             --memory 2Gi \
@@ -157,11 +207,21 @@ jobs:
             --set-env-vars "$API_ENV_VARS" \
             --set-secrets "FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest"
 
-      - name: Configure simplify-worker env vars and secrets
+      # Same --set-env-vars-replaces-everything rationale as juno-api above: this wipes
+      # juno-worker's stale JUNO_MODE=worker in the same step that sets SERVICE_MODE=worker.
+      # Note --set-env-vars only ever touches plain env vars; it does NOT touch secret-backed
+      # vars attached via --set-secrets/--update-secrets, so the two ATHENA_HEALTH_* secret
+      # refs (main Juno's Athena Health integration, unused by this repo's code) need their
+      # own explicit removal. --set-secrets and --remove-secrets are mutually exclusive in
+      # gcloud's flag grouping, so this uses --update-secrets (idempotently (re)attaching the
+      # Firebase secret) together with --remove-secrets for the two stale Athena refs --
+      # gcloud applies --remove-secrets first, then --update-secrets, so this is safe to
+      # re-run every deploy even after the Athena refs are long gone.
+      - name: Configure juno-worker env vars and secrets
         run: |
-          WORKER_ENV_VARS="GCP_PROJECT_ID=$GCP_PROJECT_ID,GCP_BUCKET_NAME=$GCP_BUCKET_NAME,GCP_LOCATION=$GCP_REGION,VERTEX_AI_MODEL=gemini-3.5-flash,FIRESTORE_DATABASE_ID=(default),WORKER_SERVICE_ACCOUNT=simplify-worker-invoker@$GCP_PROJECT_ID.iam.gserviceaccount.com,SERVICE_MODE=worker"
+          WORKER_ENV_VARS="GCP_PROJECT_ID=$GCP_PROJECT_ID,GCP_BUCKET_NAME=$GCP_BUCKET_NAME,GCP_LOCATION=global,VERTEX_AI_MODEL=gemini-3.5-flash,FIRESTORE_DATABASE_ID=(default),WORKER_SERVICE_ACCOUNT=juno-worker-invoker@$GCP_PROJECT_ID.iam.gserviceaccount.com,SERVICE_MODE=worker"
 
-          gcloud run services update simplify-worker \
+          gcloud run services update juno-worker \
             --region "$GCP_REGION" \
             --project "$GCP_PROJECT_ID" \
             --memory 2Gi \
@@ -169,11 +229,15 @@ jobs:
             --min-instances=0 \
             --max-instances "$WORKER_MAX_INSTANCES" \
             --set-env-vars "$WORKER_ENV_VARS" \
-            --set-secrets "FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest"
+            --update-secrets "FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest" \
+            --remove-secrets "ATHENA_HEALTH_TEST_CLIENT_ID,ATHENA_HEALTH_TEST_CLIENT_SECRET"
 
+      # Reuses main Juno's existing retention job and scheduler names (juno-trial-anon-cleanup
+      # / juno-trial-anon-cleanup-daily) rather than standing up new simplify-* equivalents --
+      # this workflow now owns updating them in place, image included.
       - name: Deploy anonymous-user-cleanup Cloud Run Job
         run: |
-          gcloud run jobs deploy simplify-anon-cleanup \
+          gcloud run jobs deploy juno-trial-anon-cleanup \
             --image="$BACKEND_IMAGE" \
             --region="$GCP_REGION" \
             --project="$GCP_PROJECT_ID" \
@@ -187,16 +251,18 @@ jobs:
             --cpu=1
 
       # jobs update is idempotent on every re-run once the schedule exists; only the
-      # first run ever needs the create fallback. Auth here is an OAuth access token
-      # against the Cloud Run Admin API (the `:run` control-plane method), not an OIDC
-      # identity token against a Cloud Run service URL -- --oauth-service-account-email
-      # is the correct flag for that reason.
+      # first run ever needs the create fallback -- and juno-trial-anon-cleanup-daily
+      # already exists, so in practice the `update` branch always wins here. Auth here is
+      # an OAuth access token against the Cloud Run Admin API (the `:run` control-plane
+      # method), not an OIDC identity token against a Cloud Run service URL --
+      # --oauth-service-account-email is the correct flag for that reason. SA stays
+      # juno-scheduler-invoker@ (unchanged; this account is not being replaced).
       - name: Ensure Cloud Scheduler trigger for anonymous-user-cleanup exists
         run: |
-          SCHEDULER_URI="https://$GCP_REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$GCP_PROJECT_ID/jobs/simplify-anon-cleanup:run"
-          SCHEDULER_SA="simplify-scheduler-invoker@$GCP_PROJECT_ID.iam.gserviceaccount.com"
+          SCHEDULER_URI="https://$GCP_REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$GCP_PROJECT_ID/jobs/juno-trial-anon-cleanup:run"
+          SCHEDULER_SA="juno-scheduler-invoker@$GCP_PROJECT_ID.iam.gserviceaccount.com"
 
-          gcloud scheduler jobs update http simplify-anon-cleanup-daily \
+          gcloud scheduler jobs update http juno-trial-anon-cleanup-daily \
             --project="$GCP_PROJECT_ID" \
             --location="$GCP_REGION" \
             --schedule="0 4 * * *" \
@@ -204,7 +270,7 @@ jobs:
             --uri="$SCHEDULER_URI" \
             --http-method=POST \
             --oauth-service-account-email="$SCHEDULER_SA" \
-          || gcloud scheduler jobs create http simplify-anon-cleanup-daily \
+          || gcloud scheduler jobs create http juno-trial-anon-cleanup-daily \
             --project="$GCP_PROJECT_ID" \
             --location="$GCP_REGION" \
             --schedule="0 4 * * *" \
@@ -214,13 +280,21 @@ jobs:
             --oauth-service-account-email="$SCHEDULER_SA"
 
       # Backstop #1 of this app's zero-retention design (backstop #2 is the Firestore
-      # TTL policy — one-time manual setup, see the top-of-file comment). Scoped to the
-      # care_plan_inputs/ prefix that services/care_plan_input.py writes uploaded inputs
-      # under, so this can never touch anything else in the bucket.
-      - name: Apply GCS lifecycle rule for uploaded inputs
+      # TTL policy -- one-time manual setup, see the top-of-file comment). This bucket
+      # (juno-medical-clarity-backend) is SHARED with main Juno's own trial upload flow,
+      # which already has a lifecycle rule protecting its own care_plan_trial/ prefix.
+      # `gcloud storage buckets update --lifecycle-file` REPLACES the bucket's entire
+      # rule set rather than merging, so this file must always contain BOTH prefixes --
+      # writing only care_plan_inputs/ here would silently delete juno's care_plan_trial/
+      # retention coverage on the very first deploy. Each rule is scoped to its own
+      # prefix, so neither app's rule can ever touch the other's objects.
+      - name: Apply GCS lifecycle rules (both apps' upload prefixes)
         run: |
           cat > /tmp/simplify-lifecycle-rule.json <<'EOF'
-          {"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["care_plan_inputs/"]}}]}
+          {"rule":[
+            {"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["care_plan_inputs/"]}},
+            {"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["care_plan_trial/"]}}
+          ]}
           EOF
           gcloud storage buckets update "gs://$GCP_BUCKET_NAME" \
             --lifecycle-file=/tmp/simplify-lifecycle-rule.json \
@@ -256,6 +330,12 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
           VITE_API_PROCESSING_URL: ${{ secrets.VITE_API_PROCESSING_URL }}
 
+      # Deploys this repo's rules onto the live, SHARED juno-medical-clarity Firestore
+      # database, replacing whatever main Juno had deployed there. See docs/deployment.md
+      # ("Firestore rules") for the diff that was done before this takeover was approved --
+      # main Juno's rules covered only care_plan_outputs (no rate_limits block at all), so
+      # this repo's rules are a strict superset and nothing the live app depends on loses
+      # access.
       - name: Deploy Firestore rules
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
@@ -268,6 +348,13 @@ jobs:
           npx firebase-tools deploy --only firestore:rules \
             --project "${{ vars.GCP_PROJECT_ID }}" --non-interactive
 
+      # Deploys to the live default Hosting site (juno-medical-clarity, serving
+      # https://juno-medical-clarity.web.app), which today serves main Juno's trial app --
+      # this deploy overwrites it with this repo's frontend, per the approved takeover.
+      # firebase.json pins hosting to "site": "juno-medical-clarity" explicitly (the project
+      # has a second, unused site, juno-app-99, so relying on default-site inference is
+      # avoided) -- --only hosting is unambiguous here since firebase.json declares exactly
+      # one hosting config.
       - name: Deploy to Firebase Hosting
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

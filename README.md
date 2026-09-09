@@ -25,20 +25,21 @@ behind if that never happens (see [`docs/data-and-privacy.md`](docs/data-and-pri
 Browser (anonymous Firebase Auth)
    │  POST /jobs
    ▼
-Cloud Run: simplify-api  ──create job doc──▶  Firestore (care_plan_outputs)
+Cloud Run: juno-api      ──create job doc──▶  Firestore (care_plan_outputs)
    │                                                 ▲
-   └──enqueue Cloud Task─────────────────────────────┼──▶ Cloud Run: simplify-worker
+   └──enqueue Cloud Task─────────────────────────────┼──▶ Cloud Run: juno-worker
                                                        │        │
                               live Firestore listener │        ├─▶ Vertex AI (Gemini)
                               (job status/stage)       │        └─▶ GCS (input storage)
    Browser ◀────────────────────────────────────────┘
 ```
 
-`simplify-api` and `simplify-worker` are the **same container image**, deployed as two
-Cloud Run services and distinguished only by a `SERVICE_MODE` environment variable.
-`simplify-api` is the public, unauthenticated front door; it creates a Firestore job
-document and enqueues a Cloud Task. `simplify-worker` is reachable only via
-Cloud Tasks (OIDC-verified) and runs the actual pipeline: deterministic term detection
+The API and worker roles are deployed as two Cloud Run services (`juno-api` and
+`juno-worker` — this app took over existing infrastructure rather than standing up its own;
+see [`docs/deployment.md`](docs/deployment.md)) running the **same container image**,
+distinguished only by a `SERVICE_MODE` environment variable. `juno-api` is the public,
+unauthenticated front door; it creates a Firestore job document and enqueues a Cloud Task.
+`juno-worker` is reachable only via Cloud Tasks (OIDC-verified) and runs the actual pipeline: deterministic term detection
 followed by three sequential calls to Gemini on Vertex AI. The browser never polls an
 HTTP endpoint for status — it attaches a live Firestore listener to the job document.
 

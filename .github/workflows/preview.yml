@@ -1,0 +1,140 @@
+name: Preview
+
+# Deploys frontend/ to a temporary Firebase Hosting preview channel for every
+# pull request, so a reviewer gets a live link without needing a local build.
+# Restricted to PRs whose head branch lives in this repository (not forks)
+# because the deploy step needs the FIREBASE_SERVICE_ACCOUNT secret, which
+# GitHub Actions never exposes to workflows triggered from a fork.
+#
+# Frontend-only: this does NOT deploy a per-PR backend (juno-api/juno-worker
+# stay pointed at production, per VITE_API_PROCESSING_URL below) and does NOT
+# deploy Firestore rules -- both would risk mutating the shared, live
+# juno-medical-clarity project from an unreviewed PR. A preview build talks to
+# the same production API and Firestore rules that main already uses.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy-preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      CHANNEL_ID: pr-${{ github.event.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      # Same build-time config as deploy.yml's "Build frontend" step, so the preview
+      # points at the same production backend API and Firebase project the live site
+      # uses -- this workflow never stands up a per-PR backend.
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_API_PROCESSING_URL: ${{ secrets.VITE_API_PROCESSING_URL }}
+
+      # Same auth mechanism deploy.yml's "Deploy to Firebase Hosting" step uses: write
+      # the FIREBASE_SERVICE_ACCOUNT secret to a temp credentials file and point
+      # firebase-tools at it via GOOGLE_APPLICATION_CREDENTIALS -- no marketplace
+      # action, no new secret. firebase.json pins hosting to "site":
+      # "juno-medical-clarity" (the project's other site, juno-app-99, is unused), so
+      # --only juno-medical-clarity below targets that site explicitly rather than
+      # relying on default-site inference.
+      - name: Deploy preview channel
+        id: deploy
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          creds_file="$RUNNER_TEMP/firebase-service-account.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$creds_file"
+          export GOOGLE_APPLICATION_CREDENTIALS="$creds_file"
+
+          set +e
+          deploy_output=$(npx firebase-tools hosting:channel:deploy "$CHANNEL_ID" \
+            --project juno-medical-clarity --only juno-medical-clarity --expires 7d 2>&1)
+          deploy_exit=$?
+          set -e
+
+          rm -f "$creds_file"
+          echo "$deploy_output"
+
+          if [ "$deploy_exit" -ne 0 ]; then
+            exit "$deploy_exit"
+          fi
+
+          # Pull the channel URL straight out of firebase-tools' human-readable
+          # output. It prints two web.app URLs: an FYI "Hosting URL: https://
+          # <site>.web.app" (the LIVE site, no "--") ahead of the actual
+          # "Channel URL (...): https://<site>--<channel>-<hash>.web.app" line we
+          # want -- require the "--" so the live URL's single hyphens (e.g.
+          # juno-medical-clarity.web.app) can never match this pattern.
+          # Deliberately not using --json here: npx/npm's own stderr chatter (e.g.
+          # "npm warn exec ...") gets merged ahead of firebase-tools' stdout when
+          # both streams are captured together, which breaks JSON parsing in
+          # practice -- a plain grep has no such fragility.
+          preview_url=$(echo "$deploy_output" \
+            | grep -oE 'https://[a-zA-Z0-9-]+--[a-zA-Z0-9-]+\.web\.app[a-zA-Z0-9/_.-]*' \
+            | head -n1)
+
+          if [ -z "$preview_url" ]; then
+            echo "::error::Could not extract a preview URL from firebase-tools output."
+            exit 1
+          fi
+
+          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+
+      - name: Write job summary
+        run: |
+          {
+            echo "### Firebase Hosting preview"
+            echo ""
+            echo "**Channel:** \`$CHANNEL_ID\` (site: \`juno-medical-clarity\`, expires in 7 days)"
+            echo ""
+            echo "**URL:** ${{ steps.deploy.outputs.preview_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment preview URL on the PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREVIEW_URL: ${{ steps.deploy.outputs.preview_url }}
+        run: |
+          body="### Preview deployed
+
+          **URL:** $PREVIEW_URL
+
+          Channel \`$CHANNEL_ID\` expires 7 days after the last deploy. This
+          comment updates on every new push to this PR. This preview talks to the
+          production API and database -- it does not stand up a per-PR backend."
+
+          gh pr comment "${{ github.event.number }}" \
+            --repo "${{ github.repository }}" \
+            --edit-last \
+            --body "$body" \
+            || gh pr comment "${{ github.event.number }}" \
+              --repo "${{ github.repository }}" \
+              --body "$body"
