@@ -19,4 +19,10 @@ describe('TermsPage', () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/currently 5 per hour, subject to change without notice/i)).toBeInTheDocument();
   });
+
+  it('renders the contact email as a mailto link', () => {
+    render(<MemoryRouter><TermsPage /></MemoryRouter>);
+    const link = screen.getByRole('link', { name: /tejitpabari99@gmail\.com/i });
+    expect(link).toHaveAttribute('href', 'mailto:tejitpabari99@gmail.com');
+  });
 });

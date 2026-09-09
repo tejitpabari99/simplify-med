@@ -36,17 +36,22 @@
 
 /* Headings that receive scripted focus on mount for screen-reader announcement
    (tabIndex={-1} keeps them out of normal Tab order, so this never affects
-   sighted keyboard navigation). Suppress the default focus box; keep a
-   focus-visible ring as a safety net for any genuine keyboard-driven focus. */
+   sighted keyboard navigation). Suppress the focus box unconditionally.
+   NOTE: an earlier version of this rule also had a `:focus-visible` fallback
+   meant as a safety net for "genuine" keyboard focus. That fallback was
+   itself the bug: Chromium's focus-visible heuristic treats a script-driven
+   `.focus()` call as keyboard-like whenever it fires with no prior pointer
+   interaction on the page (which is exactly what happens on initial load),
+   so `:focus-visible` matched the programmatically-focused heading and,
+   being declared after the plain `:focus` rule with equal specificity, won
+   the cascade and painted the ring anyway. Since these elements are never
+   reachable via Tab, there is no real keyboard-focus case to protect --
+   suppressing the outline for both :focus and :focus-visible is correct. */
 h1[tabindex="-1"]:focus,
-h2[tabindex="-1"]:focus {
-  outline: none;
-}
-
+h2[tabindex="-1"]:focus,
 h1[tabindex="-1"]:focus-visible,
 h2[tabindex="-1"]:focus-visible {
-  outline: 2px solid var(--accent-violet);
-  outline-offset: 4px;
+  outline: none;
 }
 
 html {
@@ -796,6 +801,21 @@ body {
 
 .legal-page article strong {
   color: var(--text-primary);
+}
+
+.legal-page article a {
+  color: var(--accent-violet);
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+.legal-page article a:hover {
+  color: var(--accent-violet-dark);
+}
+
+.legal-page article a:focus-visible {
+  outline: 2px solid var(--accent-violet);
+  outline-offset: 2px;
 }
 
 @media (max-width: 600px) {

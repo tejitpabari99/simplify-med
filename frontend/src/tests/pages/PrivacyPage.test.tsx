@@ -18,7 +18,13 @@ describe('PrivacyPage', () => {
       screen.getByRole('heading', { name: /privacy policy for simplify/i })
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/isn't a HIPAA-covered service/i)
+      screen.getByText(/not a substitute for professional medical advice/i)
     ).toBeInTheDocument();
+  });
+
+  it('renders the contact email as a mailto link', () => {
+    render(<MemoryRouter><PrivacyPage /></MemoryRouter>);
+    const link = screen.getByRole('link', { name: /tejitpabari99@gmail\.com/i });
+    expect(link).toHaveAttribute('href', 'mailto:tejitpabari99@gmail.com');
   });
 });

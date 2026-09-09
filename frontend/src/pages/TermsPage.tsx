@@ -86,7 +86,10 @@ export default function TermsPage() {
         </p>
 
         <h2>10. Contact</h2>
-        <p>Questions about these terms can be directed to tejitpabari99@gmail.com.</p>
+        <p>
+          Questions about these terms can be directed to{' '}
+          <a href="mailto:tejitpabari99@gmail.com">tejitpabari99@gmail.com</a>.
+        </p>
       </article>
     </div>
   );

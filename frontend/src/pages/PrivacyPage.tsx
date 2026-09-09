@@ -33,7 +33,7 @@ export default function PrivacyPage() {
           </li>
           <li>
             This is a demonstration tool. It's not a substitute for professional medical
-            advice, and it isn't a HIPAA-covered service.
+            advice.
           </li>
         </ul>
 
@@ -104,7 +104,10 @@ export default function PrivacyPage() {
         </p>
 
         <h2>Contact</h2>
-        <p>Questions about Simplify can be directed to tejitpabari99@gmail.com.</p>
+        <p>
+          Questions about Simplify can be directed to{' '}
+          <a href="mailto:tejitpabari99@gmail.com">tejitpabari99@gmail.com</a>.
+        </p>
       </article>
     </div>
   );
