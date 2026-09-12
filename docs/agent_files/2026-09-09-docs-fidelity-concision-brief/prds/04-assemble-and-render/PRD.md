@@ -3,7 +3,7 @@
 Parent brief: `docs/agent_files/2026-09-09-docs-fidelity-concision-brief/brainstorm.v1.md` (approved; not re-litigated here — see especially §2.5, §3.1, §3.4).
 Branch: `docs/fidelity-concision-brief`.
 Depends on: 01 (`backend/models/ledger.py` — `Fact`, `FactCategory`; `backend/models/care_plan/care_plan.py` — target `CarePlan` shape), 03 (`CarePlanPipeline.ground(...) -> list[Fact]`, the ledger this PRD's call consumes).
-Depended on by: 05 (review-and-correct, re-checks this step's output against the same ledger), 06 (pipeline-orchestration, wires `assemble_and_render` into `iter_steps` and renumbers `PIPELINE_STEPS`), 08 (frontend, renders this step's output — contract in §6).
+Depended on by: 05 (review-and-correct, re-checks this step's output against the same ledger), 06 (pipeline-orchestration, wires `assemble_and_render` into `iter_steps` and renumbers `PIPELINE_STEPS`), 07 (glossary, whose `build_glossary_from_care_plan`/`render_care_plan_text` re-detect against this step's `CarePlan` output — PRD 07 §4.4 closes the interface gap flagged in this PRD's §9), 08 (frontend, renders this step's output — contract in §6).
 
 ## 1. Problem
 
