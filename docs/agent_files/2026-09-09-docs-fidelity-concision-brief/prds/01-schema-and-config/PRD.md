@@ -52,7 +52,7 @@ Full old → new field table, model by model:
 | `urgency` | `Literal["normal","caution","concern","urgent"] = "normal"` | **deleted** |
 | `additional_info` | `list[str] = Field(default_factory=list)` | **deleted** |
 | `summary` | `str = ""` | unchanged |
-| `summary_fact_ids` | — | **added**: `list[int] = Field(default_factory=list)` |
+| `summary_fact_ids` | — | **added**: `list[int] = Field(default_factory=list)` — internal provenance, stripped before the API response (§4.1's internal-provenance-fields note) |
 | `raw` | `RawArtifacts \| None = None` | **deleted** (see §4.1.4) |
 
 **`Diagnosis`**
@@ -83,6 +83,14 @@ status: Literal["to_do", "done"]
 
 No default (strict). `FollowUp` gets it too, per the brief's explicit list in §3.9/decision-log row 41 ("added and REQUIRED on Medication, Test, Procedure, OtherInstruction, FollowUp") even though `FollowUp` isn't named in prompt §D of the task brief's item list — the design brief's own schema-changes section (3.9) is unambiguous, and `FollowUp` is exactly the kind of actionable item ("go to your appointment") the status split (08) needs. Treating it as extracted-not-derived: a follow-up already attended is `"done"`.
 
+**`Medication`, `Test`, `Procedure`, `OtherInstruction`, `FollowUp`, `WarningSign`** (all six) — new field:
+
+```python
+source_fact_ids: list[int] = Field(default_factory=list)
+```
+
+No default requirement beyond the empty list (matches `summary_fact_ids`'s own default). Populated by assembly (04) as it maps each `Fact` onto the item it becomes; consumed by review (05) to check every cited id exists in the ledger. See "Fact-ID citation fields" below for the full shape rationale and — the more consequential decision — why and where this field (and `summary_fact_ids`) must be stripped before it ever reaches an API response.
+
 **`Medication.change` / `Medication.change_description` fold**
 
 Old:
@@ -100,22 +108,51 @@ One field. `""` means "nothing noteworthy to report about a change" (the note do
 
 *Alternative considered and rejected*: keep two fields but make `change_description` required-if-`change`. Rejected because cross-field conditional-requirement validators are exactly the kind of complexity this fold is meant to remove, and because "torn" cases (the note is ambiguous about whether something changed) are better served by an empty string than by a forced boolean guess — consistent with the brief's "remove nothing, don't force inference" principle.
 
-**`CarePlan.summary` fact-ID citation**
+**Fact-ID citation fields: `summary_fact_ids` and `source_fact_ids`**
 
-Recommendation: **sibling list field**, not an object wrapper:
+Two fact-ID citation fields exist in the new schema, both populated by assembly (04) and consumed by review (05). Together they are the schema-level half of the project's soundness contract (§9 — Change C): every care-plan item cites the facts it's built from, and review checks that every cited id actually exists in the ledger.
+
+`CarePlan.summary` gets a sibling list field, not an object wrapper:
 
 ```python
 summary: str = ""
 summary_fact_ids: list[int] = Field(default_factory=list)
 ```
 
-Rejected alternative: making `summary` a small object (`{text: str, fact_ids: list[int]}`). Reasons to prefer the sibling-list shape:
-1. `summary` today is a plain string consumed directly by the frontend ("What You Need to Know" card body, and `buildPdfHtml.ts`). Keeping it a string means 08 does not have to touch how the summary itself is rendered — only how (or whether) it reads the new sibling field, which it doesn't need to for rendering at all (see §6).
-2. `CarePlan` already has multiple flat sibling relationships of exactly this shape (`reason_for_visit` is a list sibling of nothing else; `diagnosis` is an object *because* it has 2+ heterogeneous sub-fields — `summary` doesn't gain anything from that pattern since it has exactly one piece of metadata).
-3. Review (05) needs to check "each cited fact supports what summary says, nothing uncited crept in" (brief §3.5) — a flat `list[int]` is the simplest possible input to that check; no need to reach into a nested object.
-4. `summary_fact_ids` is never rendered to the patient (the ledger/citations are explicitly internal — brief §3.10), so there is no UI reason to co-locate it with the text.
+`Medication`, `Test`, `Procedure`, `OtherInstruction`, `FollowUp`, and `WarningSign` — the six item models a per-item citation makes sense on — each get the identical shape:
 
-`summary_fact_ids` is small (a handful of ints) and, unlike `raw`, is not being stripped before persistence for size reasons — see §4.1.4 for why `raw` was stripped and why that reasoning doesn't apply here.
+```python
+source_fact_ids: list[int] = Field(default_factory=list)
+```
+
+(`Diagnosis`/`DiagnosisDetail` and `ReasonForVisit` do not get one — out of this decomposition's six-model list; `questions` and `low_priority` are plain `list[str]`, generated/judged rather than mapped 1:1 from a single fact, and are checked differently at review per brief §3.5.)
+
+Rejected alternative for `summary_fact_ids`'s shape: making `summary` a small object (`{text: str, fact_ids: list[int]}`). Reasons to prefer the sibling-list shape, which by the same logic settles `source_fact_ids`'s shape too:
+1. `summary` today is a plain string consumed directly by the frontend ("What You Need to Know" card body, and `buildPdfHtml.ts`). Keeping it a string means 08 does not have to touch how the summary itself is rendered — only how (or whether) it reads the new sibling field, which it doesn't need to for rendering at all (see §6). The same reasoning covers every item model gaining `source_fact_ids`: `title`, `why`, `instructions`, etc. stay exactly as 08 already renders them.
+2. `CarePlan` already has multiple flat sibling relationships of exactly this shape (`reason_for_visit` is a list sibling of nothing else; `diagnosis` is an object *because* it has 2+ heterogeneous sub-fields — `summary`/each item doesn't gain anything from that pattern since it has exactly one piece of citation metadata).
+3. Review (05) needs to check "each cited fact supports what this summary/item says, nothing uncited crept in" (brief §3.5) — a flat `list[int]` is the simplest possible input to that check; no need to reach into a nested object.
+4. Neither field is ever rendered to the patient — the ledger and anything that cites into it are explicitly internal (brief §3.10) — so there is no UI reason to co-locate either with the text it cites.
+
+**Both fields must never reach the API response, the frontend, or the PDF.** See the new subsection immediately below. This reverses an earlier draft of this PRD's reasoning for `summary_fact_ids` specifically, which held that it is "small (a handful of ints) and, unlike `raw`, is not being stripped before persistence for size reasons." That reasoning answered the wrong question — it was about Firestore document *size*, not about whether a fact-ID list is safe to expose. The owner's decision (extending brief §3.10's "the ledger is never displayed" to anything that cites into it) is that a fact-ID list is exactly as internal as the ledger it points into, regardless of how small it is; size was never the reason either field needs to be stripped.
+
+**Internal provenance fields never reach the API boundary**
+
+Unlike `CarePlan.raw` (see "`RawArtifacts` retirement" below), there is no existing stripping mechanism for `summary_fact_ids`/`source_fact_ids` to inherit, because neither field exists in the codebase today — this PRD is what introduces them. Verified by repo-wide grep: `summary_fact_ids` has zero hits anywhere in `backend/` as of this PRD, and `routes/worker.py`'s only pre-persistence stripping is the two explicit `.pop()` calls at `worker.py:202-203` (`care_plan.raw`, `input.text`) — there is no generic "strip internal-only fields" mechanism in this codebase to plug into; each stripped field is named by hand at that one call site.
+
+**This is a gap this PRD must specify a fix for, not a mechanism that already generalizes.** The fix, to land alongside `raw`'s stripping at `routes/worker.py:195-203`:
+
+```python
+output_data.get("care_plan", {}).pop("raw", None)
+output_data.get("input", {}).pop("text", None)
+output_data.get("care_plan", {}).pop("summary_fact_ids", None)
+for _key in ("medications", "tests", "procedures", "other", "follow_up", "warning_signs"):
+    for _item in output_data.get("care_plan", {}).get(_key, []):
+        _item.pop("source_fact_ids", None)
+```
+
+Seven fields (one top-level, six nested one-per-item-list) is enough repetition to warrant a small named helper rather than inline loops at the call site — recommended shape is a module-level `_strip_internal_provenance(care_plan_dict: dict) -> None` in `routes/worker.py` that mutates in place and is called once right where the two existing `.pop()` calls already live — but the exact factoring is an implementation call for whoever lands it. What this PRD fixes is *that* both fields must be stripped here, unconditionally, before `complete_job` persists `output_data` — not the helper's precise shape.
+
+**This PRD specifies the fix but does not implement it — flagged for 06**, consistent with this PRD's existing precedent one section below (the dead `.pop("raw", None)` cleanup is likewise specified here and left for 06 to make, since `routes/worker.py` is 06's file to edit per this PRD's Non-Goals). It must land in the same change that makes 04 actually populate these fields with real fact ids (04 is what turns "declared but always `[]`" into "carries real citations"), since an unpopulated field has nothing to leak but a populated, un-stripped one is a live provenance leak the moment 04 exists. Recorded as `[RESOLVED]` in §9.
 
 **`RawArtifacts` retirement**
 
@@ -182,8 +219,13 @@ cannot be hallucinated (brief brainstorm.v1.md §3.2).
 Fact: one atomic, evidence-linked clinical statement, emitted by the
 grounding LLM call (03) as a flat ledger, at roughly clause granularity
 (brief §2.5, "one fact per note clause, not one fact per attribute").
-Consumed by assembly (04) and review (05). Never persisted to Firestore
-and never sent to the frontend — pipeline-internal only (brief §3.10).
+Stores a POINTER into its cited unit's text (`char_start`/`char_end`),
+not a copy — the LLM's own verbatim quote is verified by 03 and then
+discarded in favor of its location; call `quote_for(fact, units_by_id)`
+below to rehydrate it. Consumed by assembly (04) and review (05), both of
+which must use `quote_for()` rather than a `Fact.quote` field, which does
+not exist. Never persisted to Firestore and never sent to the frontend —
+pipeline-internal only (brief §3.10).
 """
 
 from __future__ import annotations
@@ -230,16 +272,32 @@ class Fact(JsonModel):
     id: int
     category: FactCategory
     unit_id: int
-    quote: str
+    char_start: int
+    char_end: int
     text: str
+
+
+def quote_for(fact: Fact, units_by_id: dict[int, Unit]) -> str:
+    """Rehydrate the verbatim evidence quote for `fact` on demand from the
+    in-memory unit list, rather than reading a `quote` field that does not
+    exist on `Fact`. `char_start`/`char_end` are Python slice offsets into
+    the cited unit's `text` -- `unit.text[char_start:char_end]` -- computed
+    once by grounding's deterministic offset-recovery step (PRD 03 §4.3)
+    and never re-derived here; this helper only performs the lookup and
+    slice. Callers (04's assembly prompt, 05's corrector) must look the
+    unit up by `fact.unit_id` (or reuse a `units_by_id` map they already
+    have, e.g. `{u.id: u for u in units}`) and pass it in -- this module
+    does not itself carry a reference to the current job's unit list."""
+    return units_by_id[fact.unit_id].text[fact.char_start:fact.char_end]
 ```
 
 Field-by-field rationale:
 
-- **`Unit.id` / `Fact.id`** — both plain `int`. The brief's own diagram (§3.2) shows unit IDs as bare integers (`id: 47`); using the same type for `Fact.id` keeps both ledgers addressable the same way. `Fact.id` is **not spelled out explicitly** in the task's §B bullet list ("category tag, a unit/line ID, a verbatim quote, and the fact content") but is required by two other parts of the same brief that this PRD must reconcile: `summary_fact_ids: list[int]` (§4.1) needs something to point at, and review's coverage check is "for each ledger fact, does it appear in the output" (brief §3.5) — which requires each fact to be individually addressable. This is a filled gap, not a contradiction of the brief; recorded as `[RESOLVED]` in §9.
+- **`Unit.id` / `Fact.id`** — both plain `int`. The brief's own diagram (§3.2) shows unit IDs as bare integers (`id: 47`); using the same type for `Fact.id` keeps both ledgers addressable the same way. `Fact.id` is **not spelled out explicitly** in the task's §B bullet list ("category tag, a unit/line ID, a verbatim quote, and the fact content") but is required by other parts of the same brief that this PRD must reconcile: `summary_fact_ids`/`source_fact_ids: list[int]` (§4.1) need something to point at, and every downstream citation check (04's assembly, 05's per-item soundness check) addresses facts by this id — which requires each fact to be individually addressable regardless of which direction the citation check runs. This is a filled gap, not a contradiction of the brief; recorded as `[RESOLVED]` in §9.
 - **`Fact.unit_id`** — the brief's prose calls this "a line ID"; structurally it is `Unit.id` (the unitizer's numbering is the only numbering that exists — brief §3.2 explicitly retires per-page line-counting in favor of one flat `Unit.id` sequence). Named `unit_id` rather than `line_id` to avoid implying it's a raw text-file line number.
-- **`Fact.quote`** — verbatim substring of the cited `Unit.text`. This is what 03's deterministic substring check (brief §3.3, "every quote must be a substring of the line it cites") validates against; the check itself is 03's code, not this PRD's, but the field must exist for 03 to write it.
-- **`Fact.text`** — the fact's own content at clause granularity, distinct from `quote`. The brief draws exactly this distinction ("a verbatim quote, and the fact's content at clause granularity" — brief §3.3) — `quote` is evidence, `text` is the extracted clause 04 will render into a `CarePlan` field. They may overlap substantially but are not required to be identical (e.g. `quote` might be `"metoprolol 25mg BID"` while `text` is the fuller clause `"Continue metoprolol 25 mg twice daily"` per the brief's own worked example in §2.5).
+- **`Fact.char_start` / `Fact.char_end`** — `int`, Python slice offsets into the cited `Unit.text` (`unit.text[char_start:char_end]`). This replaces an earlier draft of this PRD, which gave `Fact` a `quote: str` field holding a verbatim copy of the cited text. The owner's decision: the LLM's grounding call still emits a `quote` field exactly as before (03 §4.1/§4.2 — unchanged prompt, unchanged verbatim-substring check), because a model that invents evidence cannot produce a real substring of the source, which is what makes fabrication mechanically detectable. What changes is what happens *after* that check passes — 03's `_locate_quote_offsets` (03 §4.3) deterministically finds the verified quote inside the cited unit's raw text and records only its location, never a second copy of the text. The source a job run operates on is deterministic and unchanging for that run (units are recomputed by the pure function `unitize(input_text, input_provenance)`, 02), so a pointer is sufficient; a copy would duplicate patient source text inside the ledger for no benefit. The offsets themselves are always code-computed, never model-produced — the model cannot be trusted to count characters, so it is never asked to. See `quote_for()` immediately below for how 04/05 recover the text these offsets point at.
+- **`Fact.text`** — the fact's own content at clause granularity, distinct from the LLM's `quote`. The brief draws exactly this distinction ("a verbatim quote, and the fact's content at clause granularity" — brief §3.3) — the quote is evidence (verified, then discarded in favor of its location), `text` is the extracted clause 04 will render into a `CarePlan` field, and it is the one piece of the LLM's four-field output that is actually stored verbatim on `Fact`. It may overlap substantially with the evidence quote but is not required to be identical (e.g. the LLM's `quote` might be `"metoprolol 25mg BID"` while `text` is the fuller clause `"Continue metoprolol 25 mg twice daily"` per the brief's own worked example in §2.5).
+- **`quote_for(fact, units_by_id)`** — lives in this module, alongside `Fact`, rather than in `services/unitizer.py` (02's file): it is a one-line lookup over `Fact`/`Unit` data with no unitization logic of its own, so colocating it with the two models it reads keeps 04/05 to a single import from the module that already defines the ledger contract, instead of adding a cross-PRD import onto 02 for a helper that doesn't unitize anything. 04 and 05 (owned by another workstream in this pass) must call this helper wherever they need the evidence text — `Fact.quote` does not exist, and reading a nonexistent attribute is a hard `AttributeError`, not a silent fallback.
 
 Both models inherit `JsonModel` (`backend/models/base.py`) — `extra="forbid"`, `to_dict()`/`from_dict()` — identical strictness posture to every other backend model. No length constraints on `quote`/`text` beyond `str`, matching the rest of the codebase's convention of not imposing Pydantic-level string length caps.
 
@@ -365,10 +423,11 @@ This is a small, in-scope fix (same function, same file, direct consequence of a
 | `warning_signs[].urgency` | always present, non-null, defaults `"monitor"` | present, **may be `null`** |
 | `medications[].status`, `tests[].status`, `procedures[].status`, `other[].status`, `follow_up[].status` | absent | **added**, always `"to_do"\|"done"`, never absent/null |
 | `medications[].change` / `.change_description` | two fields (`bool`, `str`) | **one field** `change: str` |
-| `summary_fact_ids` | absent | **added**, `list[int]`, may be `[]` |
+| `summary_fact_ids` | absent | **added to the internal `CarePlan` model**, but stripped at `routes/worker.py` before `output_data` is persisted (§4.1's internal-provenance-fields note) — **never present** in the API response |
+| `medications[].source_fact_ids`, `tests[].source_fact_ids`, `procedures[].source_fact_ids`, `other[].source_fact_ids`, `follow_up[].source_fact_ids`, `warning_signs[].source_fact_ids` | absent | **added to the internal model** (all six item models), same stripping treatment as `summary_fact_ids` — **never present** in the API response |
 | `raw` | present when populated (but already stripped before persistence — `routes/worker.py:198`) | **removed entirely** (field no longer exists on the model) |
 
-No route signatures, HTTP status codes, or error shapes change. `CarePlanInternal`, `Metrics`, `Grading`, `Input` are untouched. The `Unit`/`Fact` ledger models introduced in `backend/models/ledger.py` never appear in any API response — they are pipeline-internal only (§4.1.4, §4.3).
+No route signatures, HTTP status codes, or error shapes change. `CarePlanInternal`, `Metrics`, `Grading`, `Input` are untouched. The `Unit`/`Fact` ledger models introduced in `backend/models/ledger.py` never appear in any API response — they are pipeline-internal only (§4.1.4, §4.3). Nor do `summary_fact_ids` or any `*.source_fact_ids`: both are declared on `CarePlan` and its item models (so they round-trip through internal pipeline state exactly like any other field, `extra="forbid"` included) but are stripped at the `routes/worker.py` boundary before `output_data` is persisted or returned — see §4.1's internal-provenance-fields note for the fix this PRD specifies (and flags for 06 to land, since it lives in `routes/worker.py`).
 
 ## 6. Frontend Change Summary
 
@@ -379,7 +438,10 @@ No route signatures, HTTP status codes, or error shapes change. `CarePlanInterna
 ```typescript
 interface CarePlanContent {
   summary: string;
-  summary_fact_ids: number[];              // NEW — internal-use only; 08 may ignore it entirely, need not render it (ledger/citations are not shown to the patient — brief §3.10)
+  // summary_fact_ids: declared on the backend CarePlan model, but stripped
+  // at the routes/worker.py boundary before the API response — 08 never
+  // receives it, so it is intentionally absent from this interface, not
+  // an oversight (ledger/citations are internal — brief §3.10).
   reason_for_visit: Array<{ reason: string; description: string }>;
   diagnosis: {
     // main_conclusion REMOVED — do not reference it
@@ -413,6 +475,8 @@ interface CarePlanContent {
 }
 ```
 
+None of the six item types' new `source_fact_ids` field appears in this interface either, for the same reason `summary_fact_ids` doesn't: both are stripped server-side before the API response (§4.1, §5). 08's TypeScript types need no `source_fact_ids`/`summary_fact_ids` field on any interface — omitting them entirely is the correct match to the actual wire contract, not an oversight.
+
 08 also needs, from `CarePlanView.tsx`'s existing null-handling patterns: `URGENCY_ORDER`/`URGENCY_COLORS`/`URGENCY_LABELS` lookups (`CarePlanView.tsx:267-274`) currently index by `sign.urgency` assuming it's always a valid key; once `urgency` can be `null`, those lookups need a null-safe path (the brief specifies: null renders grey, sorts last — brief decision-log row "Null urgency renders grey, sorts LAST, and is never removed"). This is 08's implementation, not this PRD's, but the schema-level trigger for that work is exactly `warning_signs[].urgency` going nullable here.
 
 ## 7. Testing
@@ -421,7 +485,7 @@ interface CarePlanContent {
 
 | File | What breaks | What it should assert instead |
 |---|---|---|
-| `backend/tests/fixtures/care_plan.json` | Contains `urgency`, `additional_info`, `diagnosis.main_conclusion`, `importance` and `source` on every item, no `status`, `medications[0].change`/`change_description` as two fields, `raw` object, `warning_signs[0].urgency` as non-null | Rewrite the fixture to the new shape: drop the five removed-field families and `raw`/`additional_info`; add `status` to every medication/test/procedure/other/follow_up entry; fold `change`+`change_description` into one `change` string; add `summary_fact_ids: [1, 2, 3]` (small, non-empty, to exercise the round-trip); keep `warning_signs[0].urgency` non-null (there's already a value, `"emergency"` — no need to also cover the null case in the *round-trip* fixture, since `test_readpath_tolerance.py`'s replacement (below) is the right place for that) |
+| `backend/tests/fixtures/care_plan.json` | Contains `urgency`, `additional_info`, `diagnosis.main_conclusion`, `importance` and `source` on every item, no `status`, `medications[0].change`/`change_description` as two fields, `raw` object, `warning_signs[0].urgency` as non-null | Rewrite the fixture to the new shape: drop the five removed-field families and `raw`/`additional_info`; add `status` to every medication/test/procedure/other/follow_up entry; fold `change`+`change_description` into one `change` string; add `summary_fact_ids: [1, 2, 3]` (small, non-empty, to exercise the round-trip) and a small non-empty `source_fact_ids` (e.g. `[1]`) on one entry in each of the six item lists, exercising the round-trip for those too |
 | `backend/tests/models/test_care_plan.py::test_care_plan_round_trips_full_fixture` | Fixture drift (above) | No code change needed once the fixture is fixed — this test just round-trips whatever the fixture contains |
 | `backend/tests/models/test_care_plan.py::test_care_plan_rejects_extra_top_level_key` / `::test_care_plan_rejects_extra_nested_key` | None directly — mechanical, keys off the (fixed) fixture | No change needed |
 | `backend/tests/models/test_care_plan.py::test_care_plan_minimal_payload_uses_pipeline_defaults` | `assert model.urgency == "normal"` — field no longer exists, `AttributeError` | Delete that one assertion line; everything else in the test (empty-list defaults for `reason_for_visit`, `medications`, etc.) is unaffected since an empty list never triggers the new `status`-required validation |
@@ -443,9 +507,12 @@ interface CarePlanContent {
 
 ### 7.3 New tests this PRD should add
 
-- `backend/tests/models/` gets a new `test_ledger.py` (or a `test_ledger.py` under wherever 02/03 land theirs — recommend creating a minimal one here since the models exist here): round-trip a `Unit` and a `Fact` through `to_dict()`/`from_dict()`; assert `extra="forbid"` rejects an unknown key on each; assert `Fact.category` rejects a value outside the eight-item `Literal`. This gives 02/03 a model-correctness baseline they don't have to write themselves before their own logic tests land.
+- `backend/tests/models/` gets a new `test_ledger.py` (or a `test_ledger.py` under wherever 02/03 land theirs — recommend creating a minimal one here since the models exist here): round-trip a `Unit` and a `Fact` through `to_dict()`/`from_dict()`; assert `extra="forbid"` rejects an unknown key on each — specifically assert that a `quote` key is rejected on `Fact` (`extra="forbid"` should raise `ValidationError`, not silently ignore it — a regression guard against the old field's name being reintroduced by habit); assert `Fact.category` rejects a value outside the eight-item `Literal`; assert `Fact` requires `char_start`/`char_end`/`id`/`category`/`unit_id`/`text` (no defaults) and has no `quote` attribute after construction. This gives 02/03 a model-correctness baseline they don't have to write themselves before their own logic tests land.
+- Same file: `test_quote_for_returns_unit_text_slice` — construct a `Unit` with known `text`, a `Fact` citing it with `char_start`/`char_end` matching a known substring, call `quote_for(fact, {unit.id: unit})`, assert the returned string equals that substring exactly (byte-for-byte, since `quote_for` does a plain Python slice with no normalization). `test_quote_for_raises_key_error_on_unknown_unit_id` — `units_by_id` missing the fact's `unit_id`; assert `KeyError` (documents that `quote_for` does not itself validate `unit_id` — callers are expected to have built `units_by_id` from the same unit list `_verify_ledger` already validated against).
 - `backend/tests/models/test_care_plan.py`: add one new test asserting `WarningSign(...)` without `urgency=` raises `ValidationError` (proves "no default" actually took, since a missing `= None` default is easy to typo back in during implementation) and one asserting `WarningSign(urgency=None, ...)` validates successfully (proves nullable actually took).
 - `backend/tests/models/test_care_plan.py`: add one test asserting `Medication(...)` (or any of the five) without `status=` raises `ValidationError` — same "prove the required-ness actually took" guard.
+- `backend/tests/models/test_care_plan.py`: add one test per one of the six item models (e.g. `Medication`) asserting construction with no `source_fact_ids=` succeeds and defaults to `[]`, mirroring the existing implicit coverage `summary_fact_ids`'s default already gets from `test_care_plan_minimal_payload_uses_pipeline_defaults`.
+- `backend/tests/routes/test_worker.py`: add `test_job_completed_output_has_no_summary_fact_ids` and `test_job_completed_output_has_no_source_fact_ids`, mirroring the existing `test_job_completed_output_has_no_raw` (`test_worker.py:425-463`) pattern exactly — mock `envelope.to_dict()` to return a `care_plan` dict with a populated `summary_fact_ids: [1, 2]` and at least one item carrying `source_fact_ids` (e.g. `medications: [{"title": "...", "source_fact_ids": [3]}]`), then assert `"summary_fact_ids" not in saved_output_data["care_plan"]` and `"source_fact_ids" not in saved_output_data["care_plan"]["medications"][0]`. This is the test that proves the fix specified in §4.1's internal-provenance-fields note; it lands whenever that fix does (flagged there for 06, since it's in `routes/worker.py`), but the test spec belongs to this PRD since it's this PRD's schema decision the fix protects.
 
 ## 8. Manual Intervention Required From You
 
@@ -455,10 +522,14 @@ interface CarePlanContent {
 ## 9. Open Questions & Decisions
 
 - `[RESOLVED: CarePlan.summary_fact_ids is a sibling list field (list[int]), not a wrapper object around summary]` — see §4.1 for the four-point rationale (frontend-render simplicity, precedent, review-check simplicity, no UI reason to co-locate).
+- `[RESOLVED: Medication, Test, Procedure, OtherInstruction, FollowUp, and WarningSign (all six item models) each get a source_fact_ids: list[int] = Field(default_factory=list), the identical shape and default as summary_fact_ids.]` — see §4.1's "Fact-ID citation fields" section for the shared rationale (mirrors `summary_fact_ids` exactly: sibling list, not a wrapper; never rendered).
+- `[RESOLVED: Fact drops quote: str and gains char_start: int / char_end: int — Python slice offsets into the cited Unit.text. The grounding LLM's prompt and its verbatim-substring check are UNCHANGED (03 §4.1/§4.2); only what happens after that check passes changes — 03 deterministically locates the verified quote and records its location instead of a second copy of the text. quote_for(fact, units_by_id) -> str, added to models/ledger.py alongside Fact, rehydrates the text on demand for 04's assembly prompt and 05's corrector.]` — the source text a job run operates on is deterministic and unchanging for that run (units are recomputed by the pure function `unitize(input_text, input_provenance)`, 02), so a pointer is sufficient and a copy would duplicate patient source text inside the ledger for no benefit. `quote_for` lives beside `Fact` (not in `services/unitizer.py`, 02's file) because it is a one-line lookup over `Fact`/`Unit` data with no unitization logic of its own — colocating it with the models it reads keeps 04/05 to one import from the module that already defines the ledger contract. 04 and 05 must switch every place that would have read `Fact.quote` to call `quote_for()` instead; noted as a dependency here since those PRDs are maintained separately from this pass.
+- `[RESOLVED: summary_fact_ids and source_fact_ids must never reach the API response, the frontend, or the PDF — both are internal provenance, no different in kind from the ledger they cite into. No stripping mechanism for either exists today (both are new fields with zero references anywhere in backend/ as of this PRD); the fix is specified in §4.1's internal-provenance-fields note (two new pop-based lines alongside routes/worker.py's existing raw/input.text stripping at worker.py:202-203) and flagged for 06 to implement, since routes/worker.py is 06's file per this PRD's Non-Goals.]` — this reverses an earlier draft of this PRD's own reasoning for `summary_fact_ids`, which argued it didn't need stripping because it's small; that reasoning was about Firestore document size, not exposure risk, and answered the wrong question.
+- `[RESOLVED: the project's evidence/coverage contract is soundness, not completeness. The checkable property, going forward: every care-plan item cites at least one fact via source_fact_ids, and every id in summary_fact_ids/source_fact_ids exists in the ledger. A ledger fact that no output item cites is legitimate, not an error — the assembly LLM (04) selects what belongs in a patient-facing report under its AHRQ-guided prompt, and not every extracted fact belongs there. Tradeoff, stated once here: omission is no longer mechanically detectable and becomes a prompt-quality concern for 04's assembly step; fabrication remains mechanically detectable (03's three deterministic checks against source text, and the citation-existence property this schema defines — every `summary_fact_ids`/`source_fact_ids` entry must name a real `Fact.id` — which 05 is responsible for checking).]` — this is a project-wide inversion from an earlier draft's assumption that closing the ledger meant checking every fact appears in the output; that assumption is corrected everywhere it appeared in this PRD (the `Fact.id` rationale above, and the coverage-check framing that used to justify it) and in 03 (which states the identical contract in its own §9 and additionally corrects its Non-Goals wording). 04 (assembly) is what populates `source_fact_ids`, and 05 (review) is what checks it — both are out of this pass's file scope, but the contract they must implement is settled here.
 - `[RESOLVED: Medication.change/.change_description fold to a single change: str = "" field, empty string meaning "nothing to report"]` — matches the schema's existing string-default idiom used throughout `Medication` and every other model.
 - `[RESOLVED: RawArtifacts and CarePlan.raw are deleted outright; nothing replaces them on the CarePlan model. The grounding ledger travels as pipeline-internal dataclass state (models/pipeline_events.py, owned by 06), never touching CarePlan or Firestore.]` — grounded in the verified fact that `raw` was already stripped before persistence (`routes/worker.py:198`) and the brief's explicit statement that the ledger must not be patient-visible (§3.10).
 - `[RESOLVED: Unit and Fact live in a new flat module, backend/models/ledger.py, not a new subpackage and not inside models/care_plan/.]` — matches the repo's existing flat-module precedent (`grading.py`, `input.py`, `metrics.py`) and keeps the ledger visually and structurally separate from the `CarePlan` family it is deliberately not part of.
-- `[RESOLVED: Fact gets its own id: int field, even though the task brief's §B bullet list for Fact doesn't name it explicitly.]` — required by `summary_fact_ids` (which needs something to cite) and by the coverage check's "does this fact appear in the output" per-fact question (brief §3.5). Filling this gap rather than leaving it open because both downstream requirements are unambiguous in the approved brief; there was no plausible alternative reading.
+- `[RESOLVED: Fact gets its own id: int field, even though the task brief's §B bullet list for Fact doesn't name it explicitly.]` — required by `summary_fact_ids`/`source_fact_ids` (which need something to cite) and by the citation-existence check every cited id must pass (05: "does every id in `summary_fact_ids`/`source_fact_ids` name a real fact" — see the soundness-contract entry below for why this replaces an earlier, opposite-direction framing). Filling this gap rather than leaving it open because both downstream requirements are unambiguous in the approved brief; there was no plausible alternative reading.
 - `[RESOLVED: FactCategory's eight Literal values are spelled identically to CarePlan's own top-level field names (reason_for_visit, diagnosis, medications, tests, procedures, other, follow_up, warning_signs), with "diagnosis" mapping to CarePlan.diagnosis.details specifically.]` — makes 04's category→field mapping a direct dict lookup.
 - `[RESOLVED: JobDoc.shared is deleted, not just the firestore.rules clause that reads it.]` — zero remaining consumers after the rules clause is removed; permanently-`False` dead field, not clinical content the "remove nothing" principle protects.
 - `[RESOLVED: Constants.Enums (the now-empty container class) is deleted along with its two member enums, SOURCE and IMPORTANCE.]` — zero remaining members, zero remaining consumers.
