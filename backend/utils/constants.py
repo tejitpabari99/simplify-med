@@ -136,16 +136,6 @@ class Constants:
             SAM            = _GradingMethodBase("SAM", "SAM (Doak et al. 1996) — automated approximation of content, literacy demand, and layout/typography domains")
             CDC_CCI        = _GradingMethodBase("CDC CCI", "CDC Clear Communication Index — automated approximation of main message, behavioral recommendations, numbers, and call-to-action items")
 
-    class Enums:
-        class SOURCE(Enum):
-            DOCUMENTS = "documents"
-            RECORDING = "recording"
-            NOTES     = "notes"
-
-        class IMPORTANCE(Enum):
-            HIGH = "high"
-            LOW  = "low"
-
     class EnvVars:
         GCS_BUCKET: str = "GCP_BUCKET_NAME"
         GCP_PROJECT_ID: str = "GCP_PROJECT_ID"
