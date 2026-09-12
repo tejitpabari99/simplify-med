@@ -7,11 +7,13 @@ Depended on by: nothing (leaf of the decomposition).
 
 ## 1. Problem
 
-The frontend renders the pre-inversion, pre-concision `CarePlan` shape: thirteen result cards (`frontend/src/components/CarePlanView.tsx`), a "Data Sources" card fed by a field (`additional_info`) no prompt rule populates and rendered under a fabricated heading with a variable literally named `path` (`CarePlanView.tsx:348-351`), a `diagnosis.main_conclusion` prose field the backend is deleting, `medications`/`tests`/`procedures`/`other`/`follow_up` split into five separate cards when the patient's real question is "what do I have to do," a `WarningSign.urgency` sort/color/label scheme with no null handling for a field the backend is making nullable, and a PDF export (`frontend/src/utils/buildPdfHtml.ts`) that independently duplicates every one of these problems plus a seven-method readability breakdown presented to a patient as an authoritative health-literacy assessment.
+The frontend renders the pre-inversion, pre-concision `CarePlan` shape: thirteen result cards (`frontend/src/components/CarePlanView.tsx`), a "Data Sources" card fed by a field (`additional_info`) no prompt rule populates and rendered under a fabricated heading with a variable literally named `path` (`CarePlanView.tsx:348-351`), a `diagnosis.main_conclusion` prose field the backend is deleting, `medications`/`tests`/`procedures`/`other`/`follow_up` split into five separate cards when the patient's real question is "what do I have to do," a `WarningSign.urgency` sort/color/label scheme with no null handling for a field the backend is making nullable, and a PDF export (`frontend/src/utils/buildPdfHtml.ts`) that independently duplicates every one of these problems plus a seven-method readability breakdown, currently unreachable via the production download path (see below, and §2/§4.5/§4.7 for the decision to activate rather than delete it).
 
 Verified against the real code, not assumed from the brief: `frontend/src/types/carePlan.ts` today does **not** declare `importance` or `source` on any item type — the frontend never rendered or typed these, so their backend deletion (01 §4.1) needs no frontend removal, only confirmation. `RawArtifacts` likewise never existed in any frontend type. `CarePlan.urgency` (top-level) appears only as a stray, unused key in three inline test fixtures (`ResultScreen.test.tsx:26,68,119`) — never read by any component. The real, load-bearing work is: the eight-card collapse, the Next Steps merge with status/type ordering, the null-safe warning-sign urgency path, deleting `main_conclusion`/`additional_info` render code, folding `Medication.change`, and the PDF mirroring all of it.
 
-One further finding, from reading `frontend/src/utils/downloadReport.ts` directly: **the seven-method breakdown is already dead code in production.** `downloadReport` calls `buildPdfHtml(carePlan, grading, { includeGlossary: false, includeReadability: false, includeLowPriority: false })` — every option that would surface the breakdown, the glossary, or "Other Items" in the actual downloaded report is already hard-coded `false`. No real user has ever seen the breakdown in the PDF; only a direct unit test of `buildPdfHtml` (which doesn't exist) could exercise that branch. This is a deletion of unreachable code, not a behavior change to what patients download today.
+One further finding, from reading `frontend/src/utils/downloadReport.ts` directly: **the seven-method breakdown, the glossary section, and the "Other Items" section are all currently dead code in the production download.** `downloadReport` calls `buildPdfHtml(carePlan, grading, { includeGlossary: false, includeReadability: false, includeLowPriority: false })` — every option that would surface any of the three in the actual downloaded report is already hard-coded `false`. No real user has ever seen any of them in the downloaded PDF; only a direct unit test of `buildPdfHtml` (which doesn't exist prior to this PRD) could exercise those branches.
+
+**Decision: activate all three, don't delete them.** The report is scoped to mirror the app: the same eight `CarePlan` sections `CarePlanView.tsx` renders, plus the readability breakdown as supplementary detail for the patient's own downloaded record. This is a real behavior change to what patients download, not a deletion of unreachable code — see §2, §4.5, and §4.7 for the mechanics, and §9 for the one on-screen/PDF asymmetry this surfaces (`ResultScreen.tsx`'s `hideLowPriority` prop).
 
 ## 2. Goals
 
@@ -20,7 +22,8 @@ One further finding, from reading `frontend/src/utils/downloadReport.ts` directl
 - Update `frontend/src/types/carePlan.ts` to match 01's backend contract exactly: remove `additional_info`, `CarePlan.urgency` (already absent — confirm and guard against reintroduction), `Diagnosis.main_conclusion`; fold `Medication.change`/`change_description`; add required `status` to the five actionable-item types; make `WarningSign.urgency` nullable; add `summary_fact_ids` (unused by any renderer, present for type fidelity only).
 - Make every `WarningSign.urgency` consumer (sort, color, badge label) null-safe, with null rendering grey, sorting last, and never being dropped from the list.
 - Delete the "Data Sources" card and `diagnosis.main_conclusion` rendering from both `CarePlanView.tsx` and `buildPdfHtml.ts`.
-- Delete the readability breakdown from `buildPdfHtml.ts` and simplify `downloadReport.ts`'s signature accordingly (§4.7).
+- Activate the PDF's dormant `includeGlossary`/`includeReadability`/`includeLowPriority` sections by flipping all three flags to `true` at the `downloadReport.ts` call site, so the downloaded report carries the same eight `CarePlan` sections the app shows plus the readability breakdown as supplementary detail (§4.7). The flags themselves stay in place as parameters — only the values passed change.
+- Give done-state Next Steps rows a strikethrough in addition to their existing color change, in both `CarePlanView.tsx` and `buildPdfHtml.ts`, so the distinction survives black-and-white printing (§4.4, §4.5).
 - Regenerate `frontend/src/tests/fixtures/realCarePlanOutput.fixture.json` against the new contract, and specify every other test file's required changes.
 
 ## 3. Non-Goals
@@ -293,7 +296,7 @@ Render order in the new file: What You Need to Know → Why You Came In → What
               <span className="sr-only">{isDone ? 'Done: ' : 'To do: '}</span>
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
-                  <strong style={isDone ? { color: 'var(--text-secondary)' } : undefined}>
+                  <strong style={isDone ? { color: 'var(--text-secondary)', textDecoration: 'line-through' } : undefined}>
                     {withTerms(row.title)}
                   </strong>
                   <span className="next-step-type-label">{NEXT_STEPS_TYPE_LABELS[row.type]}</span>
@@ -318,6 +321,8 @@ Render order in the new file: What You Need to Know → Why You Came In → What
 ```
 
 **Checkbox affordance, resolved.** `status: 'done'` renders `☑` in green (`#059669`, distinct from the existing violet/blue/teal category accents so it reads as a status indicator); `status: 'to_do'` renders `☐` in neutral grey. `status` is required with no null (01 §4.1), so the ternary is exhaustive by construction. A visually-hidden `sr-only` "Done: " / "To do: " prefix (the class already used for `aria-live` regions elsewhere) covers screen readers, since the glyph carries no accessible name on its own. This is a **static, read-only rendering of backend-supplied state**, so it uses `aria-hidden` + a text prefix rather than `role="checkbox"`/`aria-checked`, which would wrongly imply the control can be toggled (§3: no editable checklist, no persistence layer to write a toggle to).
+
+**Done-state rows also get a strikethrough, not just a color change.** Color alone is not a reliable done/to-do signal: not every viewer perceives the `var(--text-secondary)` vs. default-text difference, and the whole point of this card is that it survives print — the report is routinely printed in black and white, where a color-only distinction disappears entirely. `textDecoration: 'line-through'` is added to the same conditional style object on the title `<strong>` above, alongside the existing color change, so both signals travel together and neither depends on the other. This resolves the `[OPEN]` item in §9 that left this un-adopted.
 
 **Warning-sign urgency — null handling** (`CarePlanView.tsx:264-282`, current `URGENCY_COLORS`/`URGENCY_LABELS`/`URGENCY_ORDER` maps and the sort at line 267):
 
@@ -364,12 +369,17 @@ Every change in §4.4 is mirrored here using the **same** `buildNextStepsRows` i
 const rows = buildNextStepsRows(result);
 if (rows.length) {
   const items = rows.map(row => {
-    const box = row.status === 'done' ? '&#9745;' : '&#9744;'; // ☑ / ☐ numeric HTML entities
-    const color = row.status === 'done' ? '#059669' : '#9CA3AF';
+    const isDone = row.status === 'done';
+    const box = isDone ? '&#9745;' : '&#9744;'; // ☑ / ☐ numeric HTML entities
+    const color = isDone ? '#059669' : '#9CA3AF';
+    // Strikethrough travels with the color change, not instead of it (§4.4's
+    // resolved decision) -- it's the signal that survives black-and-white
+    // printing, which is the whole reason this row exists as a print target.
+    const titleStyle = isDone ? 'text-decoration:line-through;' : '';
     const stepsHtml = row.steps?.length
       ? `<ul style="margin:4px 0 0 20px;">${row.steps.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul>` : '';
     return `<div style="padding:8px 12px;margin-bottom:6px;background:#F9FAFB;border-radius:6px;">
-      <span style="color:${color};">${box}</span> <strong>${escapeHtml(row.title)}</strong>
+      <span style="color:${color};">${box}</span> <strong style="${titleStyle}">${escapeHtml(row.title)}</strong>
       <span style="font-size:11px;color:#6B7280;">${escapeHtml(NEXT_STEPS_TYPE_LABELS[row.type])}</span>
       ${row.why ? `<br><span style="color:#1D4ED8;font-size:13px;">Why: ${escapeHtml(row.why)}</span>` : ''}
       ${row.detail ? `<br><span style="color:#374151;font-size:13px;">${escapeHtml(row.detail)}</span>` : ''}
@@ -381,8 +391,14 @@ if (rows.length) {
 ```
 
 - Null-safe warning-sign urgency, mirroring §4.4's decision exactly: the sort's `order[a.urgency] ?? 4`-style fallback becomes `a.urgency ? order[a.urgency] : 4`, and the bracketed `[${escapeHtml(w.urgency)}]` label (current `buildPdfHtml.ts:112`) is wrapped in `w.urgency ? ... : ''` so a null renders no label — same one-line ternary pattern as §4.4, applied to template strings instead of JSX.
-- **Delete the entire readability breakdown block** (current `buildPdfHtml.ts:137-150`, the `if (includeReadability && grading?.enabled ...)` branch and its `methodMap` grouping logic) and the `grading` parameter along with it — see §4.7 for why this cascades into `downloadReport.ts`'s signature.
-- Delete the `BuildPdfHtmlOptions` interface's `includeReadability` flag entirely; `includeGlossary`/`includeLowPriority` are also removed — see §4.7 for why all three options go away together, not just the readability one.
+- **Keep the readability breakdown block, the `grading` parameter, and the `BuildPdfHtmlOptions` interface exactly as they are today — none of the three is deleted.** This reverses what an earlier pass of this PRD proposed: the decided scope (§1, §2) is that the downloaded report mirrors the app's eight `CarePlan` sections plus the readability breakdown as supplementary detail, not a further-trimmed subset of it. `buildPdfHtml.ts:137-150` (the `if (includeReadability && grading?.enabled ...)` branch and its `methodMap` grouping) needs no code change at all — it has been correct and independently testable since it was written; it has simply never executed in production because every caller passed `false`. The only change of substance is at the call site (§4.7), not in this file's logic.
+- **Section order changes to match `CarePlanView.tsx`'s eight-card order.** Today's `buildPdfHtml.ts` pushes Glossary (`:130-135`) before Readability (`:137-150`) before Other Items/low-priority (`:152-155`) — an order that predates the eight-card collapse and never had to match the app, since two of the three were unreachable. Once all three render for real, move the low-priority block to before the glossary block, so the shared eight sections appear in exactly the order the table in §4.4 defines (`...` → Other Items From Your Visit (7) → Medical Terms Glossary (8)), and keep Readability appended last, after Glossary — it isn't one of the eight `CarePlan` sections and has no on-screen equivalent beyond the single combined score `ResultScreen.tsx` shows (§4.7), so it reads as a print-only appendix rather than a ninth card competing with the eight for a position in that order.
+
+**Knock-on consequences of widening the PDF, now that all three sections render:**
+
+- **Page count.** A jargon-dense or fully-graded note now produces a materially longer printed report than the narrower one every real user has seen to date — a glossary card, a low-priority list, and a seven-row readability table are all new print real estate, typically adding one page or a partial page. No new pagination mechanism is introduced: `buildPdfHtml.ts` has no `page-break-*` CSS today and this PRD adds none; the existing `@media print { body { margin:0; padding:16px } }` block (`buildPdfHtml.ts` bottom) is untouched, so the added content flows through the same default browser print pagination every other section already relies on. Not a new class of risk, just more of an existing one.
+- **Missing/empty glossary in print.** `buildPdfHtml.ts:130`'s existing guard — `includeGlossary && result.terms && Object.keys(result.terms).length > 0` — is unchanged. A note with no glossary terms (or `terms` absent) prints no "Medical Terms Glossary" heading at all, exactly like today's on-screen behavior (`CarePlanView.tsx`'s equivalent guard) and exactly like today's PDF behavior for every section gated on `result.X?.length` — there is no dangling empty section header to worry about; the guard that already existed is sufficient once the flag flips to `true`.
+- **On-screen/PDF asymmetry for "Other Items."** `ResultScreen.tsx:122` renders `<CarePlanView result={care_plan} hideLowPriority />` — the low-priority card is deliberately suppressed on the always-visible result screen (a guarded regression test, `ResultScreen.test.tsx:61`, confirms this is intentional, not an oversight), while `CarePlanView` itself defaults `hideLowPriority` to `false` and shows it whenever a caller doesn't opt out. Flipping `includeLowPriority` to `true` in the PDF therefore makes the downloaded report show one section (Other Items From Your Visit) that the on-screen result screen keeps hidden for concision. This is not a contradiction to reconcile by also un-hiding it on screen — this PRD's task is the PDF's scope, not `ResultScreen.tsx`'s — but it is a real, previously-undocumented asymmetry: the screen is the concise first read, the downloaded PDF is the fuller record the patient keeps. Recorded `[RESOLVED]` in §9 rather than left as a silent surprise for whoever reads both files side by side.
 
 ### 4.6 New CSS: `.next-step-checkbox`, `.next-step-type-label`
 
@@ -408,9 +424,9 @@ Two small additions to `App.css`, alongside the existing `.result-list`/`.glossa
 
 No new color tokens added to `:root` — `#059669`/`#9CA3AF` are used as one-off inline hex values, matching `CarePlanView.tsx`'s existing convention (`#D97706`, `#1D4ED8`, etc. are all inline hex today, not custom properties).
 
-### 4.7 `frontend/src/utils/downloadReport.ts` — signature simplification
+### 4.7 `frontend/src/utils/downloadReport.ts` — flip the three flags, signature unchanged
 
-**Old:**
+**Before this PRD:**
 ```typescript
 export function downloadReport(carePlan: SimplifiedCarePlan, grading: Grading): void {
   trackEvent({ name: 'report_downloaded', params: {} });
@@ -421,18 +437,22 @@ export function downloadReport(carePlan: SimplifiedCarePlan, grading: Grading): 
 }
 ```
 
-**New:**
+**After this PRD:**
 ```typescript
-export function downloadReport(carePlan: SimplifiedCarePlan): void {
+export function downloadReport(carePlan: SimplifiedCarePlan, grading: Grading): void {
   trackEvent({ name: 'report_downloaded', params: {} });
-  const html = buildPdfHtml(carePlan);
+  const html = buildPdfHtml(carePlan, grading, {
+    includeGlossary: true, includeReadability: true, includeLowPriority: true,
+  });
   ...
 }
 ```
 
-**Why this is a real behavior change, not just cleanup.** Today's call site opts *out* of the glossary, readability, and low-priority sections in the actual downloaded PDF (all three flags `false`) — narrower than what `CarePlanView.tsx` shows on-screen. This sub-project's own task brief is explicit that the PDF must mirror "**the same eight sections**" as the app, so the PDF stops being a deliberately-trimmed subset. This is a direct instruction for this sub-project (the parent design brief is silent on PDF/app parity either way), implemented as stated. Since every option existed solely to carve the report down below eight sections, and no fewer-than-eight use case remains, `BuildPdfHtmlOptions` is deleted outright rather than kept with new defaults. `grading` drops from both signatures because its only consumer (the readability breakdown) is deleted (§4.5); the on-screen single before/after figure lives entirely in `ResultScreen.tsx`, unaffected, and was never duplicated into the PDF path.
+The signature is **unchanged** — `carePlan` and `grading` are both still required, since `grading` remains the readability block's only input (§4.5, kept, not deleted). `BuildPdfHtmlOptions` in `buildPdfHtml.ts` is likewise unchanged: it already defaults all three flags to `true` when omitted (`options?.includeGlossary ?? true`, `buildPdfHtml.ts:19-21`), so this call site's only job was ever to override those defaults down to `false`. The flags stay in place as parameters — they remain a real knob a future caller could still use to trim the report — and only the three literal values passed here change, from `false` to `true`. Passing them explicitly (rather than dropping the options argument and relying on the defaults) is deliberate: a reader of `downloadReport.ts` should see the three-section decision spelled out at the one call site that makes it, not have to go infer it from `buildPdfHtml.ts`'s defaults in a different file.
 
-`ResultScreen.tsx:124` changes from `downloadReport(care_plan, grading)` to `downloadReport(care_plan)` — a one-line update; `grading` stays in scope there for the on-screen score widget (`ResultScreen.tsx:98,100-102,112-114`), untouched.
+**Why this is a real behavior change, not just cleanup.** Today's call site opts *out* of the glossary, readability, and low-priority sections in the actual downloaded PDF (all three flags `false`). This sub-project's decided scope is that the PDF report mirrors the app: the same eight `CarePlan` sections `CarePlanView.tsx` renders, plus the readability breakdown as supplementary detail for the patient's own downloaded record — not a further-trimmed subset, and, for the readability breakdown specifically, not limited to the single combined figure `ResultScreen.tsx` shows on screen (`ResultScreen.tsx:98,100-102,112-114`, untouched) either. This is a direct instruction for this sub-project; see §4.5's third knock-on bullet for the one place this widening creates a genuine on-screen/PDF asymmetry (low-priority items), recorded rather than silently left for a future reader to notice.
+
+`ResultScreen.tsx:122`'s call site (`downloadReport(care_plan, grading)`) needs **no change** — it already passes both arguments in the signature this PRD keeps.
 
 ## 5. API Change Summary
 
@@ -447,11 +467,11 @@ Every file this PRD touches, and the shape of the change:
 | `frontend/src/types/carePlan.ts` | Full rewrite per §4.1 — deletions, the `status` addition, the `change` fold, nullable `urgency`. |
 | `frontend/src/types/envelope.ts` | **No change** — `SimplifiedCarePlan = CarePlanContent` is a type alias; verified by reading, not assumed. |
 | `frontend/src/utils/nextSteps.ts` | **New file** — `buildNextStepsRows`, `NEXT_STEPS_TYPE_ORDER`, `NEXT_STEPS_TYPE_LABELS`, `NextStepRow`/`NextStepType` (§4.3). |
-| `frontend/src/components/CarePlanView.tsx` | Eight-card reorder; Data Sources deleted; `main_conclusion` rendering deleted; Next Steps card added (calls `buildNextStepsRows`); null-safe warning-sign urgency; `change`/`change_description` fold (§4.4). |
-| `frontend/src/utils/buildPdfHtml.ts` | Mirrors `CarePlanView.tsx`'s changes; readability breakdown deleted; `grading` parameter and `BuildPdfHtmlOptions` deleted (§4.5). |
+| `frontend/src/components/CarePlanView.tsx` | Eight-card reorder; Data Sources deleted; `main_conclusion` rendering deleted; Next Steps card added (calls `buildNextStepsRows`), done-state rows get strikethrough + color; null-safe warning-sign urgency; `change`/`change_description` fold (§4.4). |
+| `frontend/src/utils/buildPdfHtml.ts` | Mirrors `CarePlanView.tsx`'s Next Steps/null-urgency/strikethrough changes; readability breakdown, `grading` parameter, and `BuildPdfHtmlOptions` all **kept, unchanged**; low-priority section moves ahead of the glossary section to match the app's eight-card order, Readability stays appended last (§4.5). |
 | `frontend/src/App.css` | Two new rule blocks, `.next-step-checkbox`/`.next-step-type-label` (§4.6). No existing rule removed or renamed. |
-| `frontend/src/utils/downloadReport.ts` | Signature drops `grading`; calls `buildPdfHtml(carePlan)` with no options (§4.7). |
-| `frontend/src/components/ResultScreen.tsx` | One-line call-site update: `downloadReport(care_plan)` (§4.7). No other change — the before/after score widget (`ResultScreen.tsx:112-114`) already shows a single combined figure and is otherwise untouched. |
+| `frontend/src/utils/downloadReport.ts` | Signature **unchanged**; the three `BuildPdfHtmlOptions` values passed to `buildPdfHtml` flip from `false` to `true` (§4.7). |
+| `frontend/src/components/ResultScreen.tsx` | **No change** — `downloadReport(care_plan, grading)` (`ResultScreen.tsx:124`) already matches the unchanged two-argument signature (§4.7). The before/after score widget (`ResultScreen.tsx:112-114`) already shows a single combined figure and is otherwise untouched. |
 | `frontend/src/components/MedicalTerm.tsx` | **No change** (§4.2). |
 | `frontend/src/tests/fixtures/realCarePlanOutput.fixture.json` | Regenerated — see §7.1. |
 
@@ -475,7 +495,7 @@ No generator script exists for this fixture (verified by repo-wide search — it
 |---|---|---|
 | `frontend/src/tests/components/ResultScreen.test.tsx` | Three inline fixtures carry a stray `urgency: 'normal'` key (lines 26, 68, 119) — harmless, since these literals target `JobDoc.output_data: Record<string, unknown> \| null`, so TS excess-property checking never fires. Uses `realCarePlanOutput.fixture.json` for its realistic-payload test. | Compiles and passes unchanged. Recommended cleanup: delete the three stray `urgency` keys. The realistic-payload test's own assertions (`/Lisinopril/`, `.medical-term` count) are unaffected by this PRD; it only needs §7.1's fixture regeneration to land for content fidelity. |
 | `frontend/src/tests/pages/HomePage.test.tsx` | Same fixture dependency; its own inline `completedDoc` (lines 47-57) has no deleted fields — already minimal. | No change beyond §7.1's fixture regeneration. |
-| `frontend/src/tests/utils/downloadReport.test.ts` | **Breaks.** (1) Every call is `downloadReport(fixture, grading)` — two-arg signature gone (§4.7). (2) Line 68's test asserts the *old* narrower PDF behavior this PRD inverts (§4.7). | Rewrite: (a) drop the second argument from all four `downloadReport(...)` calls; (b) drop the now-unused `Grading` import; (c) replace the "omits..." test with its inverse — assert `html.toContain('Medical Terms Glossary')`, `html.toContain('Other Items')`, and `html.not.toContain('Readability')`. |
+| `frontend/src/tests/utils/downloadReport.test.ts` | Signature is unchanged, so all five `downloadReport(fixture, grading)` call sites (`:33,47,57,64,72`) keep compiling untouched. **The test at `:68-80` breaks on content**, though: `'omits the Medical Terms Glossary, Readability, and Other Items sections from the downloaded report'` asserts the *old* narrower PDF behavior (glossary/readability/Other Items all absent) that this PRD inverts (§4.7). | Rewrite that one test's name and body only: replace it with its inverse — assert `html.toContain('Medical Terms Glossary')`, `html.toContain('Readability')`, and `html.toContain('Other Items')`, using the fixture's existing `terms`/`low_priority`/`grading` data (no new fixture fields needed — `:9-22`'s fixture already carries a glossary term, a low-priority item, and enabled grading entries). No other change to this file. |
 | `frontend/src/tests/utils/validateFiles.test.ts` | Unaffected. | No change. |
 | Every other `frontend/src/tests/**` file | Grepped for every deleted/changed field name and for `CarePlanView`/`buildPdfHtml`/`downloadReport` imports — zero hits outside the files above. | No change. |
 
@@ -495,29 +515,37 @@ No `CarePlanView.test.tsx` exists today — coverage is entirely indirect, throu
   - `renders exactly eight top-level result cards for a fully-populated care plan` — count `.result-card` elements (or query by each expected heading) against a fixture exercising every section.
   - `does not render a Data Sources card even if additional_info-shaped data is force-injected` — regression guard against the deleted card's reappearance; construct a `result` object with an extra unexpected key and assert no "Data Sources" text renders.
   - `renders a check mark for status "done" and an empty checkbox for status "to_do"` — one medication of each status; assert the two distinct glyphs both appear (query by the `aria-hidden` glyph's parent, or by the `sr-only` "Done: "/"To do: " text).
+  - `renders a strikethrough on a done row's title but not on a to_do row's title` — same two-status fixture; assert the done title's computed/inline style includes `line-through` and the to_do title's does not — regression guard for the resolved `[OPEN]` item in §9 (color change alone is not sufficient, particularly for black-and-white print).
   - `renders a null-urgency warning sign last, in grey, with no urgency badge` — three warning signs, one `null`, fed in an order where `null` is first; assert it renders last and that no bracketed label text appears next to its symptom (regression guard against the resolved "no invented label" decision in §4.4).
   - `never drops a null-urgency warning sign from the list` — same fixture; assert the count of rendered warning-sign blocks equals the input length.
 - **`frontend/src/tests/utils/buildPdfHtml.test.ts`** (new file — none exists today, a real gap independent of this PRD's changes):
   - `includes a Next Steps section with a checkbox glyph per item, matching the app's type precedence order`.
-  - `never includes a Readability section, even when a fully-populated Grading object exists in scope` — guards the deletion in §4.5 (note: `buildPdfHtml` no longer takes a `grading` parameter at all after this PRD, so this test simply confirms no readability content appears in output built from `CarePlanContent` alone).
+  - `includes the Medical Terms Glossary, Readability, and Other Items sections when their flags default to true and their data is present` — direct-unit-tests the three branches (`includeGlossary`/`includeReadability`/`includeLowPriority`) that were unreachable through `downloadReport` before this PRD (§1); this is the "direct unit test of `buildPdfHtml`" the Problem section notes never existed.
+  - `orders the Other Items section before the Medical Terms Glossary section, with Readability last` — a fixture populating `low_priority`, `terms`, and `grading` together; assert `html.indexOf('Other Items') < html.indexOf('Medical Terms Glossary') < html.indexOf('Readability')`, guarding the reordering in §4.5.
+  - `omits a section when its flag is explicitly false`, e.g. `includeGlossary: false` — confirms the flags still function as real knobs, not vestigial parameters, now that their default call site no longer exercises the `false` branch.
+  - `renders no Medical Terms Glossary heading at all when terms is empty` — guards the existing `Object.keys(result.terms).length > 0` guard (§4.5's knock-on bullet) now that the flag defaults to reaching this code.
+  - `renders a strikethrough style on a done Next Steps row's title in the generated HTML, and none on a to_do row's` — string-search or DOM-parse the output for `text-decoration:line-through` scoped to the correct row; same regression concern as the mirrored `CarePlanView.test.tsx` case, applied to the PDF's HTML string output.
   - `omits the Next Steps section entirely when all five source arrays are empty` (mirrors the existing `result.X?.length` guard pattern already used for every other section).
 
 ## 8. Manual Intervention Required From You
 
 - **Visual QA of the Next Steps checkbox glyphs** (ngrok + pm2, `SERVICE_MODE=combined`): confirm `☑`/`☐` render as recognizable glyphs, not tofu boxes, in your actual browsers/OSes — Unicode box-drawing support varies by system font, and the app's `Inter` font stack may not cover them. If they render poorly, fall back to an inline SVG.
 - **Print-preview QA of the same glyphs** — the brief calls the checkbox affordance out as "explicitly requested for print," and print-engine glyph rendering can differ from on-screen rendering across browsers. Print a sample report and confirm both states are visually distinct.
+- **Black-and-white print QA of the done-state strikethrough** — print (or print-preview in grayscale) a sample report with a mix of done/to-do Next Steps rows and confirm the strikethrough is legible without color: this is the entire reason strikethrough was adopted over color alone (§4.4, §9), and no automated test can substitute for looking at actual printer output.
 - **Confirm the `follow_up`-before-`other` type precedence (§4.3) reads correctly** against real care plans once 06's pipeline wiring produces real output — this PRD's order is a reasoned default, not validated against real patient-facing content.
 - **Spot-check the regenerated `realCarePlanOutput.fixture.json`** (§7.1) for narrative coherence — a mechanical field-by-field edit risks internally inconsistent content only a human read would catch.
+- **Capture a real mixed-urgency warning-sign fixture from the first end-to-end pipeline run** (post-06, ngrok + pm2, `SERVICE_MODE=combined`): once a real note produces a `CarePlan` whose `warning_signs` mix a null urgency alongside non-null ones in the same list, save it as a fixture and add a coverage case exercising the null-urgency sort/render path against that realistic narrative — supplementing, not replacing, the synthetic unit tests in §7.3. Not automatable before 06 wires a real pipeline run; consistent with PRD 04 §8's identical reasoning for its own real-note smoke tests.
 
 ## 9. Open Questions & Decisions
 
 - `[RESOLVED: Next Steps type precedence is medication (1), test (2), procedure (3), follow_up (4), other (5).]` — the brief requires "a fixed type precedence" but does not specify its order; this PRD's choice keeps the pre-merge card order for the first three types and moves `follow_up` ahead of `other` on the reasoning that a scheduled appointment is a harder commitment than a loosely-defined instruction (§4.3).
 - `[RESOLVED: a null-urgency warning sign renders no bracketed badge text at all — only the grey left border and last-sorted position signal reduced information, never an invented label like "NOT STATED" or "UNKNOWN".]` — consistent with the brief's core "don't invent from silence" principle, applied at the UI-label layer rather than only the schema-default layer (§4.4).
 - `[RESOLVED: the Next Steps checkbox is a static, read-only rendering (aria-hidden glyph + sr-only text prefix), not an interactive role="checkbox" control.]` — there is no persistence layer to write a toggle back to; the job document is deleted the instant `ResultScreen` mounts (brief non-goals), so an editable checkbox would misrepresent what the UI can actually do (§4.4).
-- `[RESOLVED: buildPdfHtml.ts/downloadReport.ts drop their include/exclude options and render all eight sections unconditionally, inverting today's narrower production behavior.]` — a direct instruction in this sub-project's task brief ("the same eight sections"), not a re-litigation of the parent brief (silent on PDF/app parity). Flagged prominently — a real behavior change to a user's download, not a pure refactor (§4.7).
+- `[RESOLVED: buildPdfHtml.ts/downloadReport.ts keep their include/exclude options — BuildPdfHtmlOptions, its three flags, and the grading parameter are all unchanged — and downloadReport.ts's call site flips all three flag values from false to true, activating rather than deleting the glossary, readability, and low-priority sections.]` — a direct decision for this sub-project: the report mirrors the app's eight sections plus the readability breakdown as supplementary detail, not a further-trimmed subset, and the flags remain real knobs rather than being deleted outright. Flagged prominently — a real behavior change to a user's download, not a pure refactor (§4.5, §4.7).
+- `[RESOLVED: the PDF's newly-activated "Other Items From Your Visit" section is a deliberate on-screen/PDF asymmetry, not a bug.]` — `ResultScreen.tsx:122` passes `hideLowPriority` to `CarePlanView`, suppressing that card on the always-visible result screen (guarded by an existing regression test, `ResultScreen.test.tsx:61`); the PDF, once `includeLowPriority` flips to `true`, shows it. The screen stays concise; the downloaded PDF is the fuller record the patient keeps. Not addressed by changing `ResultScreen.tsx` — out of this PRD's PDF-scoped task — but recorded here so the asymmetry is documented, not silently discovered later (§4.5).
 - `[RESOLVED: Test, Procedure, OtherInstruction, FollowUp are promoted from inline anonymous types to named interfaces in carePlan.ts.]` — mechanical: `nextSteps.ts` needs to reference each type by name (§4.1).
 - `[RESOLVED: glossary key capitalization for card-heading display is left as-is.]` — `[DEFERRED]` per 07 §6's own framing; the higher-traffic inline-highlight surface is unaffected either way (§4.2).
 - `[RESOLVED: summary_fact_ids is added to the TypeScript type for contract fidelity but read by no component.]` — matches 01 §6's own framing that 08 may ignore it (§4.1).
 - `[RESOLVED: the regenerated fixture sets status: "to_do" on all five actionable items.]` — nothing in the fixture's existing narrative describes a completed action (§7.1).
-- `[OPEN: whether done-state rows deserve a stronger visual treatment than a color change (e.g. strikethrough).]` Not adopted here — the brief specifies only the checkbox affordance, and unrequested visual weight risks reading as the UI grading the patient's compliance. Revisit if manual QA (§8) finds it too subtle.
-- `[OPEN: no fixture exercises a null-urgency warning sign alongside non-null ones in a realistic (non-synthetic) narrative.]` §7.3's synthetic test covers the mechanism; a real example awaits 06's pipeline wiring (mirrors 04 §8's identical caveat).
+- `[RESOLVED: done-state rows get a strikethrough in addition to the existing color change, in both CarePlanView.tsx and buildPdfHtml.ts.]` — adopted because color alone is not a reliable done/to-do signal: not every viewer perceives the color difference, and the report is routinely printed in black and white, where a color-only distinction disappears entirely. Strikethrough is a shape-based signal that survives grayscale print, which is the whole point of a printable report (§4.4, §4.5); tested in §7.3.
+- `[RESOLVED: the existing §7.3 synthetic test covers the null-urgency sort/render mechanism and is sufficient to build against; capturing a realistic mixed-urgency fixture from an actual clinical narrative requires a real end-to-end pipeline run, which cannot exist until 06 wires ground()/assemble_and_render() into iter_steps.]` — mirrors PRD 04 §8's identical disposition for its own can't-validate-without-a-real-run caveats. Moved to a concrete post-06 action in §8 rather than left open, so the gap is tracked instead of forgotten.
