@@ -16,7 +16,7 @@ This sub-project deletes all three steps and their prompts and replaces them wit
 - One new method, `CarePlanPipeline.assemble_and_render(facts, substitution_candidates, preserve_and_define_terms, abbreviations) -> CarePlan`, replacing the three deleted methods' combined responsibility with a single LLM call over the verified fact ledger.
 - One new prompt file, `backend/care_plan/prompts/assemble_and_render.txt`, carrying: the category→field mapping, the content rules salvaged from all three deleted prompts, the extended PII rule, the required-`status` rule with its default, the "not stated" sentinel and its exact scope, the near-duplicate merge rule with a worked example, the `low_priority` definition, and the `questions` cap with no minimum.
 - Deletion of `simplify_language_with_term_plan`, `clarify_and_action`, `structure_appointment_note` and their three prompt files, with every reference to them removed from `backend/care_plan/pipeline.py`'s schema/prompt-loading preamble.
-- Two deterministic, LLM-free post-checks on the model's output, applied inside `assemble_and_render` itself: `questions` truncated to 3 if the model overshoots; `summary_fact_ids` filtered to ids that actually exist in the input ledger.
+- Deterministic, LLM-free post-checks on the model's output, applied inside `assemble_and_render` itself: `questions` truncated to 3 if the model overshoots; `summary_fact_ids` and every item's `source_fact_ids` filtered to ids that actually exist in the input ledger, with any item left fully unbacked dropped outright (the project's soundness contract — 01 §9, 03 §9); and every `why`/`description` field logged, not mutated, if it falls below 03's content-richness floor (§4.4, §9).
 - A decided failure classification (fatal, no fallback) and token/temperature budget, consistent with how `iter_steps` already separates fatal from non-fatal steps.
 - Full test coverage, with named attention to the four areas the task calls out: category→field mapping, "not stated" rendering, merge-preserves-variants, and the questions cap.
 
@@ -42,7 +42,7 @@ Full proposed text:
 You are assembling a plain-language care plan for a patient, using ONLY the facts listed below. Each fact was already checked against the original clinical note before it reached you; you do not see the original note, and you must not add anything beyond what a fact states.
 
 Do these four things, in this order, and nothing else:
-1. Map each fact to a care-plan item of its category (see MAPPING). Facts are already at clause granularity, so this is close to a one-to-one map -- most facts become exactly one item.
+1. Map each fact to a care-plan item of its category (see MAPPING), recording the id of every fact each item is built from in that item's `source_fact_ids` field as you go (see SOURCE_FACT_IDS). Facts are already at clause granularity, so this is close to a one-to-one map -- most facts become exactly one item.
 2. Split each item's fact content into that item's typed fields.
 3. Render every field in plain language (see LANGUAGE RULES) -- a bounded rewrite of a few words at a time, e.g. "metoprolol 25mg BID" becomes "metoprolol 25 mg twice a day." Never rewrite a fact's meaning, only its wording.
 4. Write `summary` from the assembled whole, and list the ids of every fact it draws from in `summary_fact_ids`.
@@ -53,14 +53,16 @@ FACTS (id, category, content):
 MAPPING -- a fact's category decides which care-plan array it becomes an item in:
 - reason_for_visit -> reason_for_visit[] (reason: a few words; description: one plain-language sentence)
 - diagnosis -> diagnosis.details[] (title, plain_name, description, what_it_means_for_you; set severity ONLY if the fact itself states a severity judgement -- otherwise leave it null, never guess). If any diagnosis fact states something changed since the last visit, put that in diagnosis.changed_since_last_visit; otherwise leave it "".
-- medications -> medications[] (why, dosage, frequency, timing, duration, instructions, side_effects_to_watch, change, status)
-- tests -> tests[] (why, description, preparation, status)
-- procedures -> procedures[] (why, what_to_expect, timeframe, status)
-- other -> other[] (why, steps[], description, frequency, duration, status)
-- follow_up -> follow_up[] (time_frame, description, status)
-- warning_signs -> warning_signs[] (what_it_might_mean, what_to_do, urgency, related_to). Set urgency ONLY if the fact states or clearly implies one of emergency / call_doctor / monitor / normal_side_effect -- otherwise leave it null, never guess between them.
+- medications -> medications[] (why, dosage, frequency, timing, duration, instructions, side_effects_to_watch, change, status, source_fact_ids)
+- tests -> tests[] (why, description, preparation, status, source_fact_ids)
+- procedures -> procedures[] (why, what_to_expect, timeframe, status, source_fact_ids)
+- other -> other[] (why, steps[], description, frequency, duration, status, source_fact_ids)
+- follow_up -> follow_up[] (time_frame, description, status, source_fact_ids)
+- warning_signs -> warning_signs[] (what_it_might_mean, what_to_do, urgency, related_to, source_fact_ids). Set urgency ONLY if the fact states or clearly implies one of emergency / call_doctor / monitor / normal_side_effect -- otherwise leave it null, never guess between them.
 
 A medications fact whose content is a side effect that is merely listed, with no instruction to act on it, belongs in that medication's own side_effects_to_watch field -- never split out as a separate warning_signs item.
+
+SOURCE_FACT_IDS -- every medications, tests, procedures, other, follow_up, and warning_signs item must carry `source_fact_ids`: the id(s) of every fact you built it from (more than one id if MERGE below combines facts into one item). reason_for_visit and diagnosis items have no such field. Never leave source_fact_ids empty for an item you decide to include -- an item with no cited fact has nothing behind it and will not reach the patient.
 
 STATUS -- every medications, tests, procedures, other, and follow_up item requires status: "to_do" or "done". Never omit it and never leave it null. Use "done" if the fact states or clearly implies the item is already complete. If genuinely unclear, default to "to_do": telling a patient to do something already done costs one phone call; telling them a pending action is complete is a missed follow-up.
 
@@ -98,6 +100,7 @@ Design notes:
 
 - **Salvage map from the three deleted prompts**, so nothing valuable is lost (task item C): active voice / "you" (`simplify_language.txt` rules 5-6, `clarify_and_action.txt` rule 2) → LANGUAGE RULES; one-idea-per-sentence / under-20-words (`simplify_language.txt` rule 4, `structure_note.txt` rule 8) → LANGUAGE RULES; expand abbreviations (`simplify_language.txt`'s `{abbrev_block}`) → LANGUAGE RULES + `{abbrev_block}`; no fabricated/converted numbers (`clarify_and_action.txt` rule 4) → LANGUAGE RULES; no added urgency (`clarify_and_action.txt` rule 5) → LANGUAGE RULES; no new medical advice (`clarify_and_action.txt` rule 6) → LANGUAGE RULES; verb-first actions (`clarify_and_action.txt` rule 3) → LANGUAGE RULES; PII (`simplify_language.txt` rule 7, patient-only) → PII, extended per task item E to clinician/facility names. **Deliberately NOT salvaged**: `structure_note.txt` rules 4/5/9/10 (forced-inference — a reason for every medication, an urgency for every warning sign, exactly 3 sentences, exactly 3 questions) and rule 1 ("use only information found in the source," which those same rules then contradicted) — these are the bug, replaced here by NOT STATED, the MAPPING table's explicit nullable-urgency instruction, and QUESTIONS' no-minimum rule.
 - **`why` scope for "not stated"**: the four models with a `why` field are `Medication`, `Test`, `Procedure`, `OtherInstruction` (verified against `backend/models/care_plan/care_plan.py`); `FollowUp` has no `why` field and `WarningSign`'s analogous field (`what_it_might_mean`) is supplementary interpretation, not the specific "reason a fabricating model used to invent content" the brief's decision-log row 34 names. Scoping the sentinel to exactly these four fields — rather than every optional string field — keeps the signal meaningful: a blanket "not stated" on every empty field would clutter output that is already meant to be concise (brief §1, "verbose and imprecise") and would dilute the one case (`why`) the brief specifically calls out.
+- **`source_fact_ids` mirrors `summary_fact_ids`'s already-settled shape** (01 §4.1): every medications/tests/procedures/other/follow_up/warning_signs item lists the fact id(s) it was built from, exactly as `summary` already does for the whole document. This is what makes the project's inverted soundness contract (01 §9, 03 §9: "every item cites a real fact") mechanically checkable at the one point where the fact-to-item correspondence is actually known — assembly time — rather than reconstructed later by a heuristic. 05 does not re-implement this check; see §4.4 and 05 §4.7 for why one check, owned here, is sufficient end to end.
 - **`facts_block`** is produced by a new helper, `_format_facts_for_prompt` (§4.3), grouped by category in a fixed order so the model sees its own MAPPING checklist already partially applied — mirrors `_format_units_for_prompt`'s grouping approach from 03 (PRD 03 §4.3).
 - `low_priority`'s definition is reproduced near-verbatim from brief §3.9/decision-log row 64 ("normal results, routine findings, administrative detail... one short line per entry") with the brief's explicit "promote UP, don't delete" instinct rendered as "when in doubt, leave it in its real section."
 
@@ -212,12 +215,58 @@ def _format_facts_for_prompt(facts: list[Fact]) -> str:
 New deterministic post-check helper, alongside 03's `_verify_ledger`:
 
 ```python
+_ITEM_LIST_FIELDS = ("medications", "tests", "procedures", "other", "follow_up", "warning_signs")
+
+# Content-richness floor (PRD 04 §9, resolving the prior [DEFERRED] item) --
+# reuses 03's _is_informative_quote / _QUOTE_MIN_LENGTH /
+# _QUOTE_LONG_WORD_MIN_LENGTH (PRD 03 §4.3) verbatim. Both already live in
+# this same module (backend/care_plan/pipeline.py), so this is a same-file
+# call, not an import -- 04 does not define a parallel set of constants.
+_RICHNESS_CHECKS: tuple[tuple[str, str], ...] = (
+    ("reason_for_visit", "description"),
+    ("medications", "why"),
+    ("tests", "why"),
+    ("tests", "description"),
+    ("procedures", "why"),
+    ("other", "why"),
+    ("other", "description"),
+)
+
+
+def _log_thin_fields(model: CarePlan) -> None:
+    """Logs (never mutates or drops) a why/description field that fails
+    03's _is_informative_quote floor (PRD 04 §9). Observability only: unlike
+    NOT STATED, there is no fallback value to substitute for a field the
+    model DID fill in, and dropping an otherwise-backed item over one thin
+    field would remove genuine content the brief's "remove nothing"
+    principle protects. "Not stated in your note." (25 chars) always clears
+    the length rule on its own, so the sentinel is never flagged here."""
+    for field, attr in _RICHNESS_CHECKS:
+        for item in getattr(model, field):
+            value = getattr(item, attr, "")
+            if value and not _is_informative_quote(value):
+                logger.warning(
+                    "assemble_and_render: thin %s.%s field (%r) -- below "
+                    "the content-richness floor; not corrected or dropped, "
+                    "logged for prompt-quality review", field, attr, value,
+                )
+    for detail in model.diagnosis.details:
+        if detail.description and not _is_informative_quote(detail.description):
+            logger.warning(
+                "assemble_and_render: thin diagnosis.details[].description "
+                "field (%r) -- below the content-richness floor",
+                detail.description,
+            )
+
+
 def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
-    """Two deterministic, LLM-free guards on the assembled CarePlan (PRD 04
-    §4.5). Neither failure is fatal -- both are corrected in place and
-    logged, matching 03's drop-and-continue policy for a fact that fails a
-    per-item check (PRD 03 §4.5): a model deviation on one field is not a
-    reason to fail the whole step."""
+    """Three deterministic, LLM-free guards on the assembled CarePlan (PRD 04
+    §4.5), plus one LLM-free observability pass (content-richness, above).
+    None of the three guards is fatal -- each corrects, filters, or drops in
+    place and logs, matching 03's drop-and-continue policy for a fact that
+    fails a per-item check (PRD 03 §4.5): a model deviation on one field, or
+    one unbacked item, is not a reason to fail the whole step."""
+    _log_thin_fields(model)
     updates: dict = {}
 
     if len(model.questions) > 3:
@@ -227,13 +276,40 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
         updates["questions"] = model.questions[:3]
 
     valid_ids = {fact.id for fact in facts}
-    bad_ids = [i for i in model.summary_fact_ids if i not in valid_ids]
-    if bad_ids:
+
+    bad_summary_ids = [i for i in model.summary_fact_ids if i not in valid_ids]
+    if bad_summary_ids:
         logger.warning(
             "assemble_and_render: dropping summary_fact_ids not present in the "
-            "ledger: %s", bad_ids,
+            "ledger: %s", bad_summary_ids,
         )
         updates["summary_fact_ids"] = [i for i in model.summary_fact_ids if i in valid_ids]
+
+    for field in _ITEM_LIST_FIELDS:
+        items = getattr(model, field)
+        kept = []
+        changed = False
+        for item in items:
+            cited = [i for i in item.source_fact_ids if i in valid_ids]
+            if not cited:
+                logger.warning(
+                    "assemble_and_render: dropping unbacked %s item -- "
+                    "source_fact_ids=%r cited nothing in the ledger",
+                    field, item.source_fact_ids,
+                )
+                changed = True
+                continue
+            if len(cited) != len(item.source_fact_ids):
+                logger.warning(
+                    "assemble_and_render: dropping hallucinated source_fact_ids "
+                    "on a %s item: %s", field,
+                    [i for i in item.source_fact_ids if i not in valid_ids],
+                )
+                item = item.model_copy(update={"source_fact_ids": cited})
+                changed = True
+            kept.append(item)
+        if changed:
+            updates[field] = kept
 
     return model.model_copy(update=updates) if updates else model
 ```
@@ -242,6 +318,8 @@ Notes:
 
 - **Return type is `CarePlan`, not a `dict`.** The old `structure_appointment_note` returned `.model_dump(mode="json", exclude={"terms", "raw"})` because `iter_steps` merged that dict with a separately-computed `terms_glossary` and a `raw` artifact dict (`pipeline.py:239-247`) before constructing the final `CarePlan` via `.from_pipeline_result(result)`. `raw` no longer exists (01) and this PRD does not own how `terms` gets attached (07/06's territory) — returning the typed model directly is the more honest contract: 06 receives a real `CarePlan` and only needs `care_plan.model_copy(update={"terms": glossary})` before wrapping it into `PipelineRunResult`, rather than re-parsing a dict. See §9 for the interface note this implies for 06/07.
 - **`summary_fact_ids` verification is a citation check, free and certain** — exactly the same shape of guard as 03's "cited unit id must exist" check (PRD 03 §4.4), applied one step later to a different id space (`Fact.id` instead of `Unit.id`). It costs nothing and catches a hallucinated citation before 05 has to reason about it.
+- **`source_fact_ids` verification is the project's soundness gate, not just a citation check.** Every medications/tests/procedures/other/follow_up/warning_signs item must cite at least one real fact (01 §9, 03 §9's inverted contract). An item whose `source_fact_ids` is empty, or whose every id is hallucinated, is unbacked and is dropped from the `CarePlan` entirely — consistent with 03's drop-and-log policy for an individual fact that fails one of its three deterministic checks (PRD 03 §4.5), applied here to an individual assembled item instead of an individual fact. An item with a partially-valid `source_fact_ids` (some real ids, some hallucinated) is kept, with only the hallucinated ids dropped from the list, since the item is still backed by at least one real fact. **This check is the one place in the pipeline the citation-existence property is enforced.** 05 does not re-implement it: by the time review/correct ever see a `CarePlan`, every surviving item's `source_fact_ids` is already sound, and 05's own corrector diff check independently guarantees `correct()` cannot violate that invariant, since `source_fact_ids` is never a named correction target and any unnamed change to it is rejected like any other unnamed field change (05 §4.6, §4.7).
+- **Content-richness logging is deliberately non-mutating.** Unlike the two guards above, a thin `why`/`description` field is not corrected, filtered, or dropped — there is no known-good replacement value the way NOT STATED provides one for a genuinely absent reason, and the item is still backed by a real fact, so dropping it would remove genuine content over a heuristic's false-positive risk (03 §9 already documents that a bare length floor can under-value legitimately short evidence; the same risk applies to rendered text). The check exists to produce a warning-log signal for prompt iteration (§8), not to gate output.
 - **`questions` truncation, not rejection.** The prompt already instructs "at most three, no minimum"; the code-level cap is a backstop against a model that miscounts, not the primary enforcement mechanism (that's the prompt). Truncating rather than failing the step avoids discarding an otherwise-good `CarePlan` over a cosmetic overshoot on the one field that is explicitly the pipeline's "genuinely generative" surface (brief §2.5) and therefore most prone to venturing outside instructions.
 
 ### 4.5 Failure behaviour and budgets (task item K)
@@ -250,7 +328,7 @@ Compare against `iter_steps`'s two existing patterns (`pipeline.py:177-234`, cur
 - **Non-fatal** (`DETECT_TERMS`, `CLARIFY_AND_ACTION`): each has a defined, safe fallback that lets the next step still run — empty term lists, or falling back to the simplify step's own output.
 - **Fatal** (`SIMPLIFY_LANGUAGE`, `STRUCTURE_DOCUMENT`): no fallback exists because the step's output is exactly what the next step needs.
 
-**`assemble_and_render` is fatal**, for the same reason `STRUCTURE_DOCUMENT` was and `ground()` now is (PRD 03 §4.6): it is the only source of the typed `CarePlan` that 05 (review), 06 (progress reporting, persistence) and 08 (rendering) all depend on, and — after this PRD lands — there is no whole-document prose left anywhere in the pipeline for it to fall back to. `assemble_and_render` itself does no try/except beyond the two deterministic post-checks in §4.4 (which correct in place rather than raise); it raises `SimplifyError` on non-dict LLM output, on a `CarePlan` that fails Pydantic validation, or on an empty input ledger, and otherwise lets `LLMClient`'s own exceptions propagate unchanged. `iter_steps`'s actual fatal-wrapping of the call is 06's to write; this PRD only specifies which side of the line it belongs on.
+**`assemble_and_render` is fatal**, for the same reason `STRUCTURE_DOCUMENT` was and `ground()` now is (PRD 03 §4.6): it is the only source of the typed `CarePlan` that 05 (review), 06 (progress reporting, persistence) and 08 (rendering) all depend on, and — after this PRD lands — there is no whole-document prose left anywhere in the pipeline for it to fall back to. `assemble_and_render` itself does no try/except beyond the deterministic post-checks in §4.4 (which correct, filter, or log in place rather than raise); it raises `SimplifyError` on non-dict LLM output, on a `CarePlan` that fails Pydantic validation, or on an empty input ledger, and otherwise lets `LLMClient`'s own exceptions propagate unchanged. `iter_steps`'s actual fatal-wrapping of the call is 06's to write; this PRD only specifies which side of the line it belongs on.
 
 **Budgets**: `max_tokens=Constants.Llm.MAX_TOKENS_LONG_FORM` (65,536), `temperature=Constants.Llm.TEMPERATURE_JSON` (0.2). The old `structure_appointment_note` used the long-form budget because it emitted the whole structured care plan (`pipeline.py:133-139`'s own comment: "this step emits the full structured care-plan JSON... can easily exceed the default 8192-token cap"). `assemble_and_render` emits the same whole structured care plan, now with field-level plain-language rendering folded into the same call rather than done by two earlier prose passes — its output is at least as large as the old structuring step's, plausibly larger, since no prior rewrite has already condensed the source. `TEMPERATURE_JSON` matches every other structured-JSON-output call in this file (`ground()`, the old `structure_appointment_note`), not `TEMPERATURE_TEXT`, which is reserved for the free-text `_generate_text` path this method does not use.
 
@@ -281,6 +359,7 @@ No schema shape changes — 01 already owns and has settled `CarePlanInternal`'s
 | Person/facility names | patient PII only scrubbed; clinician/hospital names could leak (brief §1's "Doctor Alok Singh" example) | patient, clinician, and facility names all replaced with generic forms |
 | Near-duplicate findings | repeated once per anatomical site (brief §1) | merged into one item, with every variant preserved in the wording |
 | `summary_fact_ids` | field did not exist | populated, filtered to real ledger ids (§4.4) |
+| `medications[].source_fact_ids` / `tests[].source_fact_ids` / `procedures[].source_fact_ids` / `other[].source_fact_ids` / `follow_up[].source_fact_ids` / `warning_signs[].source_fact_ids` | field did not exist | populated per item during assembly; filtered to real ledger ids, and any item left with none dropped entirely (§4.4) |
 
 ## 6. Frontend Change Summary
 
@@ -327,7 +406,7 @@ Delete every test referencing `_SIMPLIFY_PROMPT`, `_CLARIFY_PROMPT`, `_STRUCTURE
 
 Delete every test built on `structure_appointment_note` / `_STRUCTURING_SCHEMA` (`test_structuring_schema_is_generated_from_structured_llm_model`, `test_structure_appointment_note_validates_and_returns_json_model_dump`, `test_structure_appointment_note_uses_long_form_token_budget`, `test_structure_appointment_note_rejects_extra_llm_key`, `test_run_returns_care_plan_model_without_internal_scores` — the last one also references `simplify_language_with_term_plan`/`clarify_and_action`, both deleted). Add:
 
-- `test_assemble_schema_is_generated_from_care_plan_minus_terms_and_note` — `json.loads(pipeline_module._ASSEMBLE_SCHEMA)`; assert `"terms" not in properties`, `"note" not in properties`, `"summary_fact_ids" in properties`, `"medications" in properties`.
+- `test_assemble_schema_is_generated_from_care_plan_minus_terms_and_note` — `json.loads(pipeline_module._ASSEMBLE_SCHEMA)`; assert `"terms" not in properties`, `"note" not in properties`, `"summary_fact_ids" in properties`, `"medications" in properties`, and `"source_fact_ids"` appears in `properties["medications"]["items"]["properties"]` — proving the field isn't accidentally excluded now that it exists on the item model (01).
 - `test_assemble_and_render_returns_care_plan_instance` — monkeypatch `_generate_json` to return a minimal valid dict; assert `isinstance(result, CarePlan)`.
 - `test_assemble_and_render_uses_long_form_token_budget_and_json_temperature` — capture kwargs, mirroring `test_ground_uses_long_form_token_budget_and_json_temperature` from PRD 03 §7.2; assert `max_tokens == Constants.Llm.MAX_TOKENS_LONG_FORM` and `temperature == Constants.Llm.TEMPERATURE_JSON`.
 - `test_assemble_and_render_rejects_non_dict_llm_output` — `_generate_json` returns a `list`; assert `SimplifyError` with `error_code == ErrorCode.LLM_INVALID_JSON`.
@@ -360,9 +439,25 @@ The load-bearing tests for this sub-project — the four areas the task calls ou
 - `test_verify_assembly_drops_summary_fact_ids_not_in_ledger` — `CarePlan.summary_fact_ids = [1, 2, 999]`, ledger has facts with ids `1, 2`; assert result is `[1, 2]`.
 - `test_verify_assembly_returns_same_object_when_no_correction_needed` — no truncation, no bad ids; assert the function still returns a valid, unmodified-in-content `CarePlan` (guards against the `model_copy` branch accidentally firing when `updates` is empty).
 
+**Soundness: `source_fact_ids`** (§4.4's citation-existence check — the load-bearing test group for this pass's Change A, and the sole place this property is checked in the whole pipeline, per §4.4's ownership note):
+
+- `test_verify_assembly_drops_item_with_empty_source_fact_ids` — a `medications[0]` with `source_fact_ids=[]`; assert it is absent from the result.
+- `test_verify_assembly_drops_item_with_all_hallucinated_source_fact_ids` — `source_fact_ids=[999]`, ledger has facts `1, 2`; assert the item is dropped, not kept with an empty list.
+- `test_verify_assembly_filters_partial_hallucination_without_dropping_item` — `source_fact_ids=[1, 999]`, ledger has fact `1`; assert the item survives with `source_fact_ids == [1]`.
+- `test_verify_assembly_keeps_fully_valid_source_fact_ids_unchanged` — no-op path, mirrors `test_verify_assembly_returns_same_object_when_no_correction_needed`.
+- One parametrized test per item list (`medications`, `tests`, `procedures`, `other`, `follow_up`, `warning_signs`), `test_verify_assembly_enforces_source_fact_ids_on_every_item_type` — proves the check is wired for all six, not just one.
+- `test_verify_assembly_leaves_reason_for_visit_and_diagnosis_untouched` — regression guard that the check is not mistakenly applied to the two item families that have no `source_fact_ids` field at all.
+
+**Content-richness floor** (§4.4/§9's resolution of the prior `[DEFERRED]` item):
+
+- `test_verify_assembly_logs_warning_for_thin_why_field` — `medications[0].why == "for BP"` (no digit, no 7+ char word, under 12 chars); assert a warning is logged (`caplog`) and the field's value is unchanged in the returned `CarePlan`.
+- `test_verify_assembly_does_not_flag_not_stated_sentinel_as_thin` — `medications[0].why == "Not stated in your note."`; assert no warning is logged (the sentinel clears the length rule on its own).
+- `test_verify_assembly_does_not_flag_informative_why_field` — `medications[0].why == "for high blood pressure"` (contains a word ≥ 7 chars, "pressure"); assert no warning.
+- `test_verify_assembly_content_richness_check_never_mutates_or_drops` — a `CarePlan` with multiple thin fields across several item types; assert the returned `CarePlan` is otherwise identical to the input (only the `questions`/`summary_fact_ids`/`source_fact_ids` guards may change it, never this one).
+
 ## 8. Manual Intervention Required From You
 
-- **Prompt smoke test against real notes**, once 06 wires `assemble_and_render()` into the live pipeline (run via ngrok + pm2, `SERVICE_MODE=combined`, against 2-3 real or realistic de-identified notes): (a) confirm a clinician or facility name in the source note renders as "your doctor" / "the hospital" in every field, not just `summary`; (b) confirm a medication with no stated reason in the note renders `why` as exactly `"Not stated in your note."`, not silently blank and not a fabricated reason; (c) confirm a note with two findings at different anatomical sites merges to one item naming both sites, not two items or one item naming only one site; (d) confirm a note that answers every plausible question produces zero `questions`, not three padded ones; (e) confirm a realistic multi-fact ledger does not hit `LLM_MAX_TOKENS` at the 65,536-token output budget. None of this is automatable without a real Vertex AI call and a judgement call on the output, consistent with PRD 03 §8's identical reasoning for `ground()`.
+- **Prompt smoke test against real notes**, once 06 wires `assemble_and_render()` into the live pipeline (run via ngrok + pm2, `SERVICE_MODE=combined`, against 2-3 real or realistic de-identified notes): (a) confirm a clinician or facility name in the source note renders as "your doctor" / "the hospital" in every field, not just `summary`; (b) confirm a medication with no stated reason in the note renders `why` as exactly `"Not stated in your note."`, not silently blank and not a fabricated reason; (c) confirm a note with two findings at different anatomical sites merges to one item naming both sites, not two items or one item naming only one site; (d) confirm a note that answers every plausible question produces zero `questions`, not three padded ones; (e) confirm a realistic multi-fact ledger does not hit `LLM_MAX_TOKENS` at the 65,536-token output budget; (f) spot-check a sample of `source_fact_ids` against the facts they cite, confirming each id genuinely supports its item's content and not merely that the id exists in the ledger (existence is mechanically checked by §4.4; relevance is not, and can't be without a model judgment call — 05's review step is the LLM-side fidelity check that complements this). None of this is automatable without a real Vertex AI call and a judgement call on the output, consistent with PRD 03 §8's identical reasoning for `ground()`.
 - No new environment variables, credentials, or console configuration — this sub-project is prompt + pure Python only.
 
 ## 9. Open Questions & Decisions
@@ -372,9 +467,10 @@ The load-bearing tests for this sub-project — the four areas the task calls ou
 - `[RESOLVED: "Not stated in your note." is scoped to exactly the four why fields — Medication.why, Test.why, Procedure.why, OtherInstruction.why — not to every optional string field on CarePlan.]` — these are the fields tied to the deleted `structure_note.txt` rule 4 ("every medication must have a 'why'"), the specific forced-inference bug the brief opens with. Applying the sentinel everywhere would clutter output the brief separately wants more concise (§1), diluting the one case that motivated it.
 - `[RESOLVED: questions is capped at 3 in two places — a prompt instruction (primary) and a deterministic post-check truncation inside assemble_and_render (backstop).]` — `CarePlan.questions` carries no schema-level `max_length` (01's already-settled schema, not reopened here); rather than ask 01 to add one, the cap is enforced at this PRD's own layer, where the risk (a model overshooting the instruction) actually originates. Truncates rather than fails the step, matching 03's per-item drop-and-continue philosophy (PRD 03 §4.5) rather than its whole-ledger-empty fatal philosophy — a few extra questions is a minor deviation, not a sign the whole output is unusable.
 - `[RESOLVED: summary_fact_ids is deterministically filtered to ids present in the input fact ledger, dropping (not failing on) any id the model hallucinates.]` — same shape and same justification as 03's "cited unit id must exist" check (PRD 03 §4.4), applied to the citation surface this PRD introduces.
+- `[RESOLVED: assemble_and_render populates source_fact_ids on every medications/tests/procedures/other/follow_up/warning_signs item it emits, exactly as it already populates summary_fact_ids for the whole document (§4.1's SOURCE_FACT_IDS prompt rule). A deterministic post-check (§4.4) then enforces the project's soundness contract at this exact boundary: every item's source_fact_ids is filtered to ids that exist in the ledger, and an item left with none (empty from the model, or every id hallucinated) is dropped from the CarePlan outright, never shipped unbacked. This is the one and only place in the pipeline this check runs -- 05 does not re-implement it (05 §4.7): 05's corrector diff check independently guarantees correct() cannot violate the invariant, since source_fact_ids is never a named correction target.]` — direct implementation of the soundness contract 01 §9 and 03 §9 both state (every item cites a real fact; a fact no item cites is legitimate, not an error), applied at assembly time because that is the one point in the pipeline where the fact-to-item correspondence is actually known, rather than reconstructed later by a heuristic (the token-overlap approach 05 previously used and has now deleted, 05 §4.7).
 - `[RESOLVED: assemble_and_render is classified fatal, with no built-in fallback, matching ground() (03) and the old structure_appointment_note.]` — see §4.5.
 - `[RESOLVED: a side effect merely listed with no instruction to act on it renders into medications[].side_effects_to_watch, not warning_signs — consistent with 03's own resolved routing decision for this content at the grounding boundary (PRD 03 §9), applied here at the field-splitting stage that actually writes it.]`
 - `[RESOLVED: severity (DiagnosisDetail) and urgency (WarningSign) are set only when a fact states or clearly implies them; otherwise left null, matching 01's nullable-no-default precedent for urgency and extending the same "never guess" posture to severity, which 01 already made independently nullable.]`
-- `[OPEN: how downstream glossary re-detection (07) and pipeline wiring (06) source the flat text to re-scan for terms, now that assemble_and_render emits a typed CarePlan instead of the single "clarified" prose string build_glossary_from_simplified_text was built to consume (brief §3.7-§3.8 describe re-detection against "the final corrected output" without specifying its shape once that output is no longer prose).]` This PRD does not resolve it — it is explicitly 06/07 territory — but flags it because the interface gap only becomes visible once this step's return type is fixed as `CarePlan`, not `str`. The likely shape (a helper that walks a CarePlan's string fields and concatenates them for re-detection) is a plausible fix but is not this PRD's to design.
+- `[RESOLVED: 07 defines render_care_plan_text(care_plan: CarePlan) -> str (PRD 07 §4.4, backend/utils/term_detection.py, co-located with its first consumer build_glossary_from_care_plan) -- exactly the "helper that walks a CarePlan's string fields and concatenates them for re-detection" this item flagged as the likely fix. 06 wires it in as the single re-detection input for both glossary curation and the "after" readability score (PRD 06 §4.4, replacing event.clarified with render_care_plan_text(event.care_plan)).]` — confirmed by reading both PRDs directly; this item was previously left open here as 06/07 territory, and both have since closed the gap exactly as this PRD's own text predicted. No further action needed from this PRD.
 - `[RESOLVED: landing this PRD alone breaks iter_steps/run() at runtime (AttributeError on the three deleted method names) until 06 rewires iter_steps to call ground() then assemble_and_render().]` — accepted sequencing consequence of the decomposition's own boundary (pipeline wiring is 06's), not a defect in this PRD; nothing is deployed in the interim per the global no-deploy constraint. Recorded explicitly (rather than left implicit like 01's dead-`.pop()` precedent) because the failure mode here is a hard runtime error, not harmless dead code, and 06's author should not have to rediscover this by running the test suite.
-- `[DEFERRED: no minimum content-richness check exists on why/description fields beyond the explicit "Not stated in your note." sentinel — a field could come back technically non-empty but uninformative (e.g. a single vague word).]` — mirrors PRD 03 §9's identical open item about `quote`'s minimum informativeness; a product-judgement call, not a contract this PRD's dependencies settle. Revisit if the manual smoke test (§8) surfaces it in practice.
+- `[RESOLVED: a why/description field passes the content-richness floor under the identical rule 03 resolved for quote's informativeness (PRD 03 §9) -- it contains a digit, OR a word of _QUOTE_LONG_WORD_MIN_LENGTH (7)-plus characters, OR is _QUOTE_MIN_LENGTH (12)-plus characters long outright. Reuses 03's _is_informative_quote / _QUOTE_MIN_LENGTH / _QUOTE_LONG_WORD_MIN_LENGTH directly -- no import needed, since both PRDs' helpers live in the same module, backend/care_plan/pipeline.py. Applies to reason_for_visit[].description, diagnosis.details[].description, medications[].why, tests[].why, tests[].description, procedures[].why, other[].why, other[].description (§4.4's _RICHNESS_CHECKS). A field that fails is logged at WARNING level and left exactly as rendered -- not corrected (no known-good replacement exists the way NOT STATED provides one) and not dropped (the item is still backed by a real fact; removing it over one thin field would cut genuine content the brief's "remove nothing" principle protects). "Not stated in your note." (25 characters) always clears the length rule on its own, so the sentinel is never flagged.]` — resolves the item previously `[DEFERRED]` here, which mirrored 03 §9's identical open item; now that 03 has settled its own version of this exact question, reusing its answer rather than inventing a second, parallel threshold is the more consistent choice, and keeps exactly one informativeness definition in the codebase instead of two that could drift apart.
