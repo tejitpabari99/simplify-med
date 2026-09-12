@@ -2,35 +2,37 @@
 
 Parent brief: `docs/agent_files/2026-09-09-docs-fidelity-concision-brief/brainstorm.v1.md` (approved; not re-litigated here — see especially §2.5, §3.1, §3.7).
 Branch: `docs/fidelity-concision-brief`.
-Depends on: 01 (schema, `Constants.Enums` deletions), 02 (`Unit`, `resolve_units_from_job_doc`), 03 (`ground()`), 04 (`assemble_and_render()`, deletion of the three old methods/prompts), 05 (`review()`, `correct()`, `close_coverage()`), 07 (`curate_glossary_terms()`, `render_care_plan_text()`, `build_glossary_from_care_plan()`).
+Depends on: 01 (schema, `Constants.Enums` deletions, the `summary_fact_ids`/`source_fact_ids` internal-provenance fields — §4.6), 02 (`Unit`, `resolve_units_from_job_doc`), 03 (`ground()`), 04 (`assemble_and_render()`, deletion of the three old methods/prompts), 05 (`review()`, `correct()`, and whichever of 04/05 lands the citation-existence check that replaces the deleted `close_coverage()` — §4.10), 07 (`curate_glossary_terms()`, `render_care_plan_text()`, `build_glossary_from_care_plan()`).
 Depended on by: nothing (this is the integration point; 08 owns the result/PDF screens this PRD's step renumbering does not touch).
 
 ## 1. Problem
 
-Every other sub-project builds one piece of the inverted pipeline and stops short of wiring it in — by design (each says so in its own §3/§9). Landed independently, 04 alone leaves `CarePlanPipeline.run()` throwing `AttributeError`: `iter_steps` (`backend/care_plan/pipeline.py:152-258`) still calls `self.simplify_language_with_term_plan`, `self.clarify_and_action`, `self.structure_appointment_note` by name, and 04 deletes all three. Nothing today calls `ground()`, `assemble_and_render()`, `review()`, `correct()`, `close_coverage()`, or `curate_glossary_terms()` — they exist as tested, standalone units with no caller.
+Every other sub-project builds one piece of the inverted pipeline and stops short of wiring it in — by design (each says so in its own §3/§9). Landed independently, 04 alone leaves `CarePlanPipeline.run()` throwing `AttributeError`: `iter_steps` (`backend/care_plan/pipeline.py:152-258`) still calls `self.simplify_language_with_term_plan`, `self.clarify_and_action`, `self.structure_appointment_note` by name, and 04 deletes all three. Nothing today calls `ground()`, `assemble_and_render()`, `review()`, `correct()`, or `curate_glossary_terms()` — they exist as tested, standalone units with no caller. (An earlier draft of 05 also specified a `close_coverage()` function here; it has since been deleted outright, per 05's own soundness-contract revision — see §4.10.)
 
-Three further things are broken or missing that no single-step PRD owns:
+Four further things are broken or missing that no single-step PRD owns:
 
 - `Constants.Pipeline.PIPELINE_STEPS` (`backend/utils/constants.py:63-77`) still names `SIMPLIFY_LANGUAGE`/`CLARIFY_AND_ACTION`/`STRUCTURE_DOCUMENT`, with labels ("Simplifying language") that describe steps that no longer exist. The frontend's `ProcessingScreen.tsx` hardcodes its own copy of this same five-step list (`frontend/src/components/ProcessingScreen.tsx:25-35`) — nobody else read that file; PRD 08 was scoped to the result screen and PDF only.
 - `PipelineRunResult`/`AdapterResult` (`backend/models/pipeline_events.py`) carry `simplified: str` and `clarified: str` — fields for pipeline stages that 04 deletes. `services/care_plan_pipeline.py:106` computes the "after" readability score from `event.clarified`, which stops existing the moment 04 lands.
 - The API→worker boundary never learned about `units: list[Unit]` (02's contract) or `list[Fact]` (03's contract) — `resolve_units_from_job_doc(job)` (02) has no call site, and `run_care_plan_pipeline`/`iter_steps` still take a single `text: str` argument.
+- `routes/worker.py`'s pre-persistence stripping (`worker.py:202-203`) only ever knew about two flat fields (`care_plan.raw`, `input.text`), removed via hand-written `.pop()` calls — it has no mechanism for `summary_fact_ids`/`source_fact_ids` (01's new internal-provenance fields, one flat and one nested one-per-item across six item lists). Verified by grep: `summary_fact_ids` has zero hits anywhere in `backend/` today, so nothing strips it yet — the moment 04 starts actually populating these fields with real fact ids, they leak straight into the API response, the frontend, and the PDF unless this PRD closes the gap (§4.6).
 
 This PRD lands last because it is the only place that can see the whole shape at once: the new step sequence, its two new deterministic thread-safety questions (item D), the composite fatal/non-fatal policy across four independently-classified LLM steps, and the one frontend file (`ProcessingScreen.tsx`) that nobody else was briefed to touch.
 
 ## 2. Goals
 
-- Rewire `iter_steps`/`run()` to call `ground → assemble_and_render → review → correct → close_coverage`, in that order, threading `units`/`facts`/`care_plan` through correctly, with glossary curation running on its own background thread from right after `detect_terms` until just before the deterministic close.
+- Rewire `iter_steps`/`run()` to call `ground → assemble_and_render → review → correct`, in that order, followed by the deterministic close (a citation-existence check that replaces the deleted `close_coverage`, then glossary re-detection), threading `units`/`facts`/`care_plan` through correctly, with glossary curation running on its own background thread from right after `detect_terms` until just before the deterministic close.
 - Redefine `Constants.Pipeline.PIPELINE_STEPS` with the new six-member step enum and patient-facing labels, and update every consumer: `services/care_plan_pipeline.py`'s `_STEP_MARKER_MAP`, `utils/markers/markers.py`, `routes/worker.py`, `utils/firebase.py::complete_job`'s hardcoded final stage, and `frontend/src/components/ProcessingScreen.tsx`'s duplicated copy.
 - Wire `units: list[Unit]` from job doc to pipeline call, and thread `list[Fact]` through the run.
 - Redefine `pipeline_events.py`'s three pipeline-layer/two adapter-layer dataclasses to match what the new pipeline actually produces.
 - Decide and implement the composite fatal/non-fatal policy across all six steps, consistent with each step-owning PRD's own classification.
-- Wire the deterministic close in the right order: `close_coverage` before glossary re-detection (neither 05 nor 07 settles this relative order; §4.9 resolves it).
+- Wire the deterministic close in the right order: any post-`correct()` citation-existence check before glossary re-detection (neither 05 nor 07 settled the old `close_coverage`/glossary order, and nothing settles the new check's order either; §4.10 resolves it).
+- Strip `summary_fact_ids`/`source_fact_ids` from the completed job's Firestore document at the same `routes/worker.py` call site that already strips `raw`/`input.text` (§4.6) — the fix PRD 01 specified but explicitly left for this PRD to land, since `routes/worker.py` is 06's file.
 - Confirm the existing error taxonomy (no new `ErrorCode` members, per 03/04/05's own discipline) surfaces safely on the frontend for every new failure mode.
 - Specify the full test plan, including the two test files (`test_pipeline_executors.py`, `test_pipeline_streaming.py`) that test the step machinery directly and are currently written entirely against the old five-step, three-LLM-call shape.
 
 ## 3. Non-Goals
 
-- No prompt text, no LLM call bodies. `ground()`, `assemble_and_render()`, `review()`, `correct()`, `close_coverage()`, `curate_glossary_terms()` are taken as given, exactly as 03/04/05/07 specify them.
+- No prompt text, no LLM call bodies. `ground()`, `assemble_and_render()`, `review()`, `correct()`, `curate_glossary_terms()`, and whichever function replaces `close_coverage()` are taken as given, exactly as 03/04/05/07 specify them.
 - No schema changes (01), no unitizer changes (02), no glossary data-file changes (07).
 - No frontend changes beyond `ProcessingScreen.tsx` and the minimal `useJobSnapshot.ts` confirmation below — `CarePlanView.tsx`, `buildPdfHtml.ts`, `types/carePlan.ts` are 08's, unaffected by step renumbering.
 - No clinical-fidelity evaluation, no per-PR preview environment (global out-of-scope).
@@ -59,7 +61,7 @@ class PIPELINE_STEPS(Enum):
     §2.5, §3.1) runs four sequential LLM calls (ground, assemble_and_render,
     review, correct) instead of three (simplify, clarify, structure).
     Labels are patient-facing progress copy — never name an internal
-    concept ("grounding", "ledger", "coverage check") the patient has no
+    concept ("grounding", "ledger", "citation check") the patient has no
     reason to see."""
     READ_NOTE           = (1, "Reading your note")
     DETECT_TERMS        = (2, "Finding difficult and medical terms")
@@ -95,7 +97,7 @@ Steps:
   3. ground
   4. assemble_and_render
   5. review
-  6. correct (+ the deterministic close: coverage check, glossary re-detect)
+  6. correct (+ the deterministic close: citation-existence check, glossary re-detect)
 ```
 
 **Imports** (additive, alongside 03/04/05's own new imports):
@@ -217,11 +219,16 @@ def iter_steps(
                                   "falling back to the pre-correction care plan")
                 # care_plan is left exactly as assemble_and_render returned it.
 
-        # Deterministic close (PRD 06 §4.9 settles the order): coverage
-        # check FIRST (it can append low_priority lines), glossary
-        # re-detection SECOND (so it can highlight terms inside anything
-        # coverage just appended).
-        care_plan = close_coverage(care_plan, facts)
+        # Deterministic close (PRD 06 §4.10 settles the order): the
+        # citation-existence check FIRST, glossary re-detection SECOND —
+        # true regardless of what the check does to care_plan (append,
+        # remove, or nothing at all; see §4.10). `check_citations` is a
+        # provisional name for whatever 04 or 05 lands in place of the
+        # deleted close_coverage (§4.10) — only this one line changes
+        # once that name is final; if 04 ends up enforcing the property
+        # inline inside assemble_and_render instead, this line is deleted
+        # entirely rather than renamed (§4.10's second branch).
+        care_plan = check_citations(care_plan, facts)
 
         try:
             curated_terms = glossary_future.result(
@@ -247,6 +254,14 @@ def iter_steps(
 ```
 
 `run(self, text: str) -> CarePlan` is now `run(self, text: str, units: list[Unit]) -> CarePlan` — identical body (`for event in self.iter_steps(text, units): ...`), only the call it forwards changes.
+
+### 4.2a Evidence text after `Fact` drops `quote` (dependency on 04/05)
+
+01/03's revision (landed alongside this pass) changed `Fact` from carrying a `quote: str` field to carrying `char_start`/`char_end` offsets into its cited `Unit.text` — the verbatim evidence text is now recovered on demand via `models.ledger.quote_for(fact, units_by_id)`, not read off the `Fact` object directly (01 §4.3, 03 §9). The practical question for this PRD: does anything `iter_steps` calls need `units_by_id` in scope to reach that text, and if so, where does it have to be threaded?
+
+**Verified against the currently-landed 04 and 05 PRDs, by reading them in full: no call site needs it today.** `_format_facts_for_prompt` (04 §4.3, reused by `review()` per 05 §4.5) renders each fact as `f"[{fact.id}] {category}: {fact.text}"` — `fact.text`, never `fact.quote` or `quote_for(...)`. The now-deleted `close_coverage`'s anchor-token check (05 §4.7) likewise read only `fact.text`. Every consumer of `Fact` downstream of grounding — `assemble_and_render`, `review`, and the deleted `close_coverage` alike — uses the LLM-facing clause content (`text`), never the evidence excerpt; the offsets exist for grounding's own fabrication check (03 §4.3) and are not re-read by anything later in the pipeline. So as of this PRD landing, `assemble_and_render`, `review`, and `correct`'s signatures need no `units`/`units_by_id` parameter, and `iter_steps` needs no code change beyond what §4.2 already shows.
+
+**The commitment this PRD makes for the case that changes.** `units` is already a parameter of `iter_steps` itself (§4.2's signature), so it is structurally in scope for the entire generator body, including every step after `GROUND` — nothing needs to be threaded "further" than it already reaches; there is no local-scope boundary here the way there is for `term_data` (§4.3 below). If a future revision of 04 or 05 adds a `units`/`units_by_id` parameter to `assemble_and_render`, `review`, or `correct` (because one of them starts calling `quote_for`), `iter_steps` builds `units_by_id = {u.id: u for u in units}` once, at the point that call site first needs it, and passes it alongside `facts` — a one-line addition to that call's lambda, not a restructuring of the generator. `units_by_id` is deliberately **not** pre-built speculatively in §4.2's code today, consistent with this PRD's own stance in §4.5 against an always-computed-but-unread value (the same "vestigial-surface pattern the brief argues against" reasoning) — it gets built only once a real consumer exists. Recorded `[RESOLVED]` in §9: this is a specified commitment, not an open question, even though the exact call site it eventually lands at is still 04/05's to determine.
 
 ### 4.3 Threading (task item D)
 
@@ -308,7 +323,7 @@ New import: `from utils.term_detection import render_care_plan_text`. `AdapterRe
 | `AdapterResult` | `care_plan, grading, raw_text, clarified_text` | `care_plan, grading, raw_text` — `clarified_text` deleted |
 | `AdapterError` | `error_data` | unchanged |
 
-**The ledger (`list[Fact]`) is deliberately NOT added to either dataclass**, departing from PRD 01 §4.1.4's suggested shape ("`units: list[Unit]` / `ledger: list[Fact]` fields once 02/03 exist"). Verified: every consumer of `facts` (grounding's own verification, `assemble_and_render`, `review`, `correct`, `close_coverage`) runs *inside* `iter_steps`, before the single `PipelineRunResult` yield at the end — nothing downstream of that yield (the adapter, the worker, metrics, tests) ever needs the ledger. PRD 01 flagged the *intended shape* so a future author wouldn't reach for `CarePlan.raw` (deleted) as the ledger's carrier; it did not mandate the field exist regardless of a consumer. Adding an always-unread field is exactly the vestigial-surface pattern the brief argues against for `additional_info`/`RawArtifacts` elsewhere — not reproducing it here. Recorded `[RESOLVED]` in §9, since this is a visible departure from a suggestion (not a requirement) in an upstream PRD.
+**The ledger (`list[Fact]`) is deliberately NOT added to either dataclass**, departing from PRD 01 §4.1.4's suggested shape ("`units: list[Unit]` / `ledger: list[Fact]` fields once 02/03 exist"). Verified: every consumer of `facts` (grounding's own verification, `assemble_and_render`, `review`, `correct`, and the post-`correct()` citation-existence check that replaces `close_coverage` — §4.10) runs *inside* `iter_steps`, before the single `PipelineRunResult` yield at the end — nothing downstream of that yield (the adapter, the worker, metrics, tests) ever needs the ledger. PRD 01 flagged the *intended shape* so a future author wouldn't reach for `CarePlan.raw` (deleted) as the ledger's carrier; it did not mandate the field exist regardless of a consumer. Adding an always-unread field is exactly the vestigial-surface pattern the brief argues against for `additional_info`/`RawArtifacts` elsewhere — not reproducing it here. Recorded `[RESOLVED]` in §9, since this is a visible departure from a suggestion (not a requirement) in an upstream PRD.
 
 `raw_text` is kept on both dataclasses even though nothing in `routes/worker.py` reads `pipeline_result.raw_text` today (verified by grep — only `.care_plan`/`.grading` are read) — it is not part of this PRD's brief to remove, and it remains a meaningful "the text this run processed" field for future observability. Not touched.
 
@@ -326,7 +341,49 @@ for event in run_care_plan_pipeline(text, units, metrics, grading_enabled, sourc
 
 Both derive from the same `job` object already in scope at that point (`job.input_text`, `job.input_provenance`) — no new Firestore read.
 
-`output_data.get("care_plan", {}).pop("raw", None)` (`worker.py:202`) — PRD 01 §4.1.4 already flagged this as dead code once `raw` no longer exists, explicitly deferring the deletion to 06. **Delete this line.** `output_data.get("input", {}).pop("text", None)` on the next line is untouched (unrelated to `raw`).
+**Internal-provenance stripping — the exact call site.** `worker.py:195-203` currently reads:
+
+```python
+output_data.get("care_plan", {}).pop("raw", None)
+output_data.get("input", {}).pop("text", None)
+```
+
+Three changes land here:
+
+1. `output_data.get("care_plan", {}).pop("raw", None)` — PRD 01 §4.1.4 already flagged this as dead code once `raw` no longer exists on `CarePlan` at all. **Delete this line.**
+2. `output_data.get("input", {}).pop("text", None)` — untouched; unrelated to `raw` or to fact-id provenance.
+3. **New**: `summary_fact_ids` (a flat top-level key on `care_plan`) and `source_fact_ids` (nested one-per-item inside `medications`, `tests`, `procedures`, `other`, `follow_up`, `warning_signs`) must also never survive to `output_data` — PRD 01 §4.1/§9: a fact-ID list is exactly as internal as the ledger it cites into, regardless of size (brief §3.10, "the ledger is never displayed," extended to anything that cites into it). PRD 01 sketched this as "two more `.pop()`-based lines" at this call site; verified against the real shape, that undercounts what the traversal actually needs. `source_fact_ids` lives one level inside a list, on six separate keys — a flat `.pop("source_fact_ids", None)` on the top-level `care_plan` dict does nothing (there is no such top-level key on `care_plan` itself) and would silently no-op forever, which is worse than doing nothing: it would look like the leak was closed when it wasn't. The real fix has to walk each of the six item lists.
+
+**Decision: a named helper, not inline pops.** Two flat pops (`raw`, `input.text`) read fine inline at the call site; seven removals — one top-level key plus six nested list-walks — do not. Inlining all seven here would bury the one call site's "nothing pipeline-internal leaks past this point" invariant inside a block of loop boilerplate, at the exact spot a future reader most needs to trust it at a glance (this call site already does five other things: derive the output name, strip `input.text`, trim `grading.entries`, and call `complete_job`). A small, named, single-purpose helper keeps that invariant legible and gives it one place to extend if a future field ever needs the same treatment:
+
+```python
+def _strip_internal_provenance(care_plan: dict) -> None:
+    """Remove fields that exist purely for the pipeline's own use --
+    evidence citations into the grounding ledger -- and must never reach
+    the API response, the frontend, or the PDF (brief §3.10; PRD 01
+    §4.1/§9: a fact-ID list is exactly as internal as the ledger it cites
+    into, regardless of size). Mutates `care_plan` (the
+    `output_data["care_plan"]` dict, already a plain dict via
+    `envelope.to_dict()` by the time this runs) in place.
+
+    `summary_fact_ids` is one flat top-level key. `source_fact_ids` is
+    nested one-per-item inside six separate item lists, so this cannot be
+    a single `.pop()` the way `raw`'s removal could be -- each list has
+    to be walked."""
+    care_plan.pop("summary_fact_ids", None)
+    for _key in ("medications", "tests", "procedures", "other", "follow_up", "warning_signs"):
+        for _item in care_plan.get(_key, []):
+            _item.pop("source_fact_ids", None)
+```
+
+Defined once, module-level in `backend/routes/worker.py`, above `execute_job`. Call site (`worker.py:195-203`, replacing the two-line block quoted above):
+
+```python
+output_data.get("input", {}).pop("text", None)
+_strip_internal_provenance(output_data.get("care_plan", {}))
+```
+
+**Rejected alternative: seven inline `.pop()`/loop lines at the call site, matching PRD 01 §4.1's literal sketch.** PRD 01's own text calls this "an implementation call for whoever lands it, not a mandate," and explicitly recommends a named helper once the count passes two flat removals — which it does here (one flat key, six nested lists). Inlining is the right call only while the removals stay flat and few, as `raw`/`input.text` did; it stops being the right call the moment one of the fields is nested inside a list this call site has to iterate to reach. Named and tested once (§7.3), the helper is also the one place a seventh internal-only field would get added later, rather than a third copy-pasted loop appearing at the call site.
 
 Comment update (`worker.py:74`, "5-stage LLM pipeline a second time, double-billing every Vertex AI call it already made"): the redelivery-guard reasoning is unchanged in substance, but the pipeline is no longer 5-stage/3-LLM-call — update the comment to "the whole pipeline (four sequential LLM calls) a second time."
 
@@ -379,9 +436,15 @@ Each PRD classified its own step; consistency check across all four:
 
 ### 4.10 Deterministic close ordering (task item F)
 
-Neither 05 nor 07 settles the relative order of `close_coverage` (05) and glossary re-detection (07) — each describes its own input as "the final corrected `CarePlan`" without saying whether that phrase includes the other's output. **Decision: `close_coverage` runs first.**
+**`close_coverage` (05) is deleted outright, not just reordered.** 05's token-overlap completeness heuristic (`_COVERAGE_OVERLAP_THRESHOLD`, `_flatten_care_plan_text`/`_fact_anchor_tokens`) implemented the project's old "does every fact survive somewhere in the output" contract. The project-wide inversion (01 §9, 03 §9) retires that contract entirely: omission is no longer mechanically checkable now that the assembly LLM (04) is trusted to select what belongs in a patient-facing report under its AHRQ-guided prompt, and the only property left that's mechanically enforceable is **soundness** — every emitted item cites at least one real fact via `source_fact_ids`, and every cited id actually exists in the ledger. Whatever function checks that property is what takes `close_coverage`'s old place in the sequence. This PRD's code (§4.2) calls it `check_citations(care_plan, facts) -> CarePlan` as a **provisional name** — which of 04 or 05 owns the real implementation, and under what name, is explicitly the other agent's call to make, not this PRD's (per the task's own framing of that division).
 
-Justification: `close_coverage` can *append* new `low_priority` entries (`"From your note: <fact text>"`, PRD 05 §4.7) when it detects a dropped fact. `render_care_plan_text` (07 §4.4), the function glossary re-detection scans, explicitly walks `care_plan.low_priority`. If glossary re-detection ran first, a medical term appearing only inside one of `close_coverage`'s newly-appended safety-net lines would never get highlighted or glossed — the exact "silent gap" pattern the brief's "remove nothing" principle argues against, just relocated to the glossary layer. Running coverage first means every string the patient can possibly read has already reached its final form before the glossary scans it. This ordering is implemented in §4.2's code (`close_coverage` → `glossary_future.result()` → `build_glossary_from_care_plan`).
+**Decision: whatever this check turns out to be, it still runs before glossary re-detection.** The original justification for `close_coverage`-then-glossary — `close_coverage` could *append* new `low_priority` lines, and `render_care_plan_text` (07 §4.4), the function glossary re-detection scans, walks `care_plan.low_priority` — no longer applies verbatim, because the new citation-existence check may not append anything observable at all: it might log-only, might strip an unsound `source_fact_ids` entry, or might do nothing to `care_plan`'s visible text whatsoever (04/05's call, not this PRD's). But the ordering argument generalizes past the specific mechanism: `render_care_plan_text` must see the CarePlan's *actually final* text, and `correct()` is the last LLM step — nothing after it except this citation check and glossary re-detection can still touch `care_plan`. Whichever of those two runs last is therefore the one whose output the other one might miss; putting the citation check first means glossary re-detection always sees whatever the citation check did (append, remove, or nothing), never the reverse. This "verify/finalize before you decorate" ordering holds regardless of which of the three behaviors 04/05 pick, so it does not need to be re-litigated once their choice is known.
+
+**Dependency on 04/05's ownership decision, both sides specified so 06 is not blocked on it:**
+- **If 05 lands it as a standalone deterministic function** — the direct structural replacement for `close_coverage`: same file, same "runs after `correct()`, takes `care_plan` and `facts`, returns `CarePlan`" shape — `iter_steps` calls it exactly where §4.2's code shows, under whatever its real name turns out to be. This PRD's sample name (`check_citations`) is provisional; landing it is a one-line rename in §4.2, not a re-design.
+- **If 04 lands it as an assembly-time invariant instead** — i.e., `assemble_and_render` itself is made responsible for never returning an item that fails the citation check, enforced before it returns — there is no separate call for `iter_steps` to make at all. The deterministic close in that case is glossary re-detection alone, and §4.2's code loses the `check_citations(...)` line entirely (a deletion, not a rename). The ordering question dissolves along with the call site: there is nothing left to order against glossary re-detection.
+
+Both outcomes are fully compatible with this PRD's own contract: `iter_steps` needs either one call (05 owns it) or zero calls (04 owns it) at this point in the sequence, and which one is not knowable until 04/05 land. Recorded `[RESOLVED]`, not `[OPEN]`, in §9 — the actionable policy ("if there's a standalone check function, call it before glossary re-detection; if there isn't, there's nothing to wire") is fully specified either way; only a one-line edit to §4.2's code remains contingent on which PRD lands it, which is a naming/deletion detail, not an unresolved design decision.
 
 ### 4.11 `backend/utils/markers/markers.py`
 
@@ -451,15 +514,17 @@ def _make_pipeline(monkeypatch):
     p = CarePlanPipeline.__new__(CarePlanPipeline)
     p.ground = MagicMock(return_value=[FACT_FIXTURE])
     p.assemble_and_render = MagicMock(return_value=CARE_PLAN_FIXTURE)
-    p.review = MagicMock(return_value=ReviewResult(verdict="pass", corrections=[], coverage=[]))
+    p.review = MagicMock(return_value=ReviewResult(verdict="pass", corrections=[]))
     p.correct = MagicMock(return_value=CARE_PLAN_FIXTURE)
     monkeypatch.setattr(pipeline_module, "detect_terms", lambda text: {...})
-    monkeypatch.setattr(pipeline_module, "close_coverage", lambda cp, facts: cp)
+    monkeypatch.setattr(pipeline_module, "check_citations", lambda cp, facts: cp)
     monkeypatch.setattr(pipeline_module, "curate_glossary_terms", lambda *a, **kw: [])
     monkeypatch.setattr(pipeline_module, "build_glossary_from_care_plan", lambda cp, terms: {})
     monkeypatch.setattr(pipeline_module, "LLMClient", lambda: MagicMock())
     return p
 ```
+
+`ReviewResult(...)` above deliberately omits a `coverage=` kwarg: 05's own soundness-contract revision (§4.10) may drop that field from `ReviewResult` entirely, or keep it for telemetry only (05 §4.7's own "review's coverage judgments are used for logging/telemetry only" framing). `coverage` already defaults to `[]` on `ReviewResult` today, so omitting the kwarg constructs correctly either way — this fixture doesn't need to know which 05 lands. `check_citations` is the same provisional name used in §4.2/§4.10; if 04 ends up enforcing the property inline instead (§4.10's other branch), this monkeypatch line is simply removed, since there is no such module-level function to patch.
 
 New/rewritten tests:
 - `test_iter_steps_yields_step_events_in_order` — assert `[(2,active),(2,done),(3,active),(3,done),(4,active),(4,done),(5,active),(5,done),(6,active),(6,done)]` (six steps, ten events).
@@ -472,7 +537,7 @@ New/rewritten tests:
 - `test_iter_steps_skips_correct_call_when_no_corrections` — `review` returns `corrections=[]`; assert `p.correct` is never invoked, but `StepEvent(step=6, ...)` is still yielded both active and done.
 - `test_run_delegates_to_iter_steps` — `p.run("text", units=[])`, assert `isinstance(result, CarePlan)`.
 - New: `test_glossary_executor_is_shut_down_even_on_fatal_ground_failure` — monkeypatch `ThreadPoolExecutor` to a spy; `p.ground` raises; assert `.shutdown(wait=False)` was called exactly once (proves the `finally` block fires on the early-return path, §4.2).
-- New: `test_close_coverage_runs_before_glossary_redetection` — monkeypatch both to append to a shared `order: list[str]`; assert `order == ["close_coverage", "build_glossary_from_care_plan"]` (proves §4.10's ordering decision is actually implemented, not just documented).
+- New: `test_citation_check_runs_before_glossary_redetection` — monkeypatch both `check_citations` (or whatever 04/05 lands, §4.10) and `build_glossary_from_care_plan` to append to a shared `order: list[str]`; assert `order == ["check_citations", "build_glossary_from_care_plan"]` (proves §4.10's ordering decision is actually implemented, not just documented). If 04 ends up enforcing the citation check inline with no separate `iter_steps` call (§4.10's other branch), this test has nothing to monkeypatch on the citation-check side and is dropped — the ordering claim in that case is vacuously true, since there is no second deterministic call left to order against glossary re-detection.
 
 ### 7.2 `backend/tests/care_plan/test_pipeline_executors.py` — targeted rewrite
 
@@ -481,6 +546,16 @@ New/rewritten tests:
 ### 7.3 `backend/tests/routes/test_worker.py` — mechanical updates
 
 Every `AdapterResult(care_plan=..., grading=..., raw_text=..., clarified_text="c")` call site (~10 occurrences, grep-confirmed) drops `clarified_text="c"` — `AdapterResult` no longer has that field (§4.5). `run_care_plan_pipeline` patches in this file (`patch("routes.worker.run_care_plan_pipeline", ...)`) already use a `lambda *a, **kw: fake_pipeline(*a, **kw)` pass-through pattern — confirmed these tolerate the new `units` positional argument with no signature change needed on the test's side, since `resolve_units_from_job_doc` also needs to be mocked/monkeypatched wherever `job` is a bare mock without real `input_text`/`input_provenance` — add `monkeypatch.setattr("routes.worker.resolve_units_from_job_doc", lambda job: [])` (or equivalent per-test mock) to every test that reaches the pipeline call, alongside the existing `resolve_input_from_job_doc` mocking already present. The "5-stage LLM pipeline" comment reference at line 856 (a docstring, not an assertion) gets the same wording update as `worker.py:74` (§4.6).
+
+**New tests, proving §4.6's stripping fix.** Extend `test_job_completed_output_has_no_raw`'s exact pattern (`test_worker.py:425-463`) — same invariant ("nothing pipeline-internal survives to `output_data`"), different fields, same fixture/mock shape (`_make_job_doc_with_pdf_upload`, a `fake_pipeline` yielding `AdapterResult`, `envelope_mock.to_dict.return_value` carrying the field to be stripped, then asserting on `mock_complete.call_args.args[1]`):
+
+- `test_job_completed_output_has_no_summary_fact_ids` — `envelope_mock.to_dict.return_value["care_plan"]` carries `"summary_fact_ids": [1, 2, 3]` alongside a real field (e.g. `reason_for_visit`); assert `"summary_fact_ids" not in saved_output_data["care_plan"]`.
+- `test_job_completed_output_has_no_source_fact_ids` — `care_plan` carries at least one populated item per list that gets one (e.g. `"medications": [{"title": "Metoprolol", "source_fact_ids": [4]}]`, `"tests": [{"title": "CBC", "source_fact_ids": [5]}]`); assert `"source_fact_ids" not in saved_output_data["care_plan"]["medications"][0]` and the same for `"tests"][0]`. Covering two of the six item lists (not all six) is enough to prove the loop in `_strip_internal_provenance` runs across keys, not just the first one — the unit test below covers all six exhaustively.
+
+**New unit tests, on the helper directly (no Flask app, no mocks)** — `backend/tests/routes/test_worker.py` or a `test_worker_helpers.py` alongside it, whichever this repo's convention prefers for a pure function in `routes/worker.py`:
+
+- `test_strip_internal_provenance_removes_summary_and_all_six_source_fact_ids` — build a dict with `summary_fact_ids` at the top level and one item (each carrying its own `source_fact_ids` plus an unrelated field, e.g. `title`) in every one of `medications`/`tests`/`procedures`/`other`/`follow_up`/`warning_signs`; call `_strip_internal_provenance(care_plan)`; assert `"summary_fact_ids" not in care_plan` and `"source_fact_ids" not in item` for all six items, while every unrelated field (`title`, etc.) survives untouched — the exhaustive, all-six-lists version of the two worker-level tests above.
+- `test_strip_internal_provenance_tolerates_missing_keys` — an empty dict, and a dict with only some of the six item-list keys present; assert no `KeyError`/exception either way (`.get(_key, [])` is what makes this safe — this test pins that behavior).
 
 ### 7.4 `backend/tests/routes/test_jobs_e2e_scenarios.py`
 
@@ -510,8 +585,10 @@ PRD 01 §7.1 already fixed `_build_care_plan`'s construction-time breakage (dele
 - `[RESOLVED: iter_steps gains a units: list[Unit] parameter; text is retained alongside it for detect_terms/glossary curation's own needs.]` — the concrete answer to PRD 02 §4.7's explicitly deferred call site.
 - `[RESOLVED: glossary curation runs on its own ThreadPoolExecutor(max_workers=1), owned by care_plan/pipeline.py::iter_steps, separate from services/care_plan_pipeline.py's before-score executor.]` — see §4.3; term_data's visibility boundary (PRD 07 §9's own observation) makes a shared executor impractical without widening StepEvent's payload.
 - `[RESOLVED: the curation LLMClient is constructed eagerly on the main thread, before executor.submit(...), specifically to avoid a concurrent vertexai.init() race with the pipeline's own already-constructed LLMClient.]` — the concrete answer to task item D's "check whether LLMClient is thread-safe": it is not documented as safe for concurrent construction, so construction is serialized instead of relying on it being safe.
-- `[RESOLVED: close_coverage runs before glossary re-detection in the deterministic close.]` — neither 05 nor 07 settled this; §4.10 resolves it so a term inside a coverage-appended safety-net line still gets highlighted.
+- `[RESOLVED: close_coverage (05) is deleted outright, not replaced 1:1 -- its old completeness/omission contract is retired project-wide. Whatever citation-existence check replaces it (04's or 05's call, not this PRD's) still runs before glossary re-detection if it exists as a separate call at all; if 04 enforces the property inline inside assemble_and_render instead, there is no separate call and the ordering question dissolves.]` — neither 05 nor 07 settled the old close_coverage/glossary order, and nothing settles the new one either; §4.10 resolves both branches so this PRD is not blocked on an upstream decision it doesn't control.
+- `[RESOLVED: iter_steps needs no units/units_by_id parameter threaded into assemble_and_render, review, or correct as of the currently-landed 04/05 PRDs -- verified by reading that every consumer of Fact downstream of grounding reads only fact.text, never fact.quote/quote_for(...), since Fact dropped its quote field for char_start/char_end offsets (01 §4.3, 03 §9). units already stays in scope for the whole iter_steps body regardless, since it's a parameter of the generator itself (§4.2). If a future 04/05 revision needs the evidence text, iter_steps builds units_by_id = {u.id: u for u in units} once, at the point of first need, and passes it alongside facts -- a one-line addition, not a restructuring.]` — see §4.2a.
 - `[RESOLVED: PipelineRunResult/AdapterResult do NOT gain a ledger (list[Fact]) field, departing from PRD 01 §4.1.4's suggested shape.]` — no consumer exists downstream of the single PipelineRunResult yield; PRD 01's suggestion was guidance against reaching for CarePlan.raw, not a mandate for an always-unread field. See §4.5.
+- `[RESOLVED: routes/worker.py's internal-provenance stripping gap -- summary_fact_ids was never stripped, and source_fact_ids (nested one-per-item across six item lists) was not reachable by any existing flat .pop() -- is closed here via a new _strip_internal_provenance(care_plan: dict) -> None helper, called at the exact call site the now-dead raw pop is deleted from.]` — PRD 01 introduced both fields with zero existing stripping mechanism to inherit (grep-verified zero hits on `summary_fact_ids` anywhere in `backend/` pre-01) and explicitly specified the fix while deferring its landing to 06, since `routes/worker.py` is 06's file per 01's own Non-Goals — the identical precedent 01 already set for deferring the dead `raw`-pop deletion to this same PRD. See §4.6.
 - `[RESOLVED: no new ErrorCode members; verified by reading that the frontend's error handling is fully generic over code/user_hint with no per-code branching, so every new failure mode (grounding, assembly, correction-diff-rejection) renders safely with zero frontend changes.]` — task item G, resolved by confirmation rather than by adding taxonomy.
 - `[RESOLVED: Constants.Deadlines.GLOSSARY_CURATION_TIMEOUT_S = 20, chosen so the internal deadline (270s) plus this timeout stays 10s under the outer job timeout (300s).]` — a reasoned default, not measured against real latency; flagged in §8 for a manual check.
 - `[RESOLVED: utils/firebase.py::complete_job's hardcoded "stage": 5 becomes Constants.Pipeline.PIPELINE_STEPS.CORRECT.number, so a future step-count change can't silently reproduce this exact bug.]`
