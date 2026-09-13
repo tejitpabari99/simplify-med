@@ -12,9 +12,12 @@ import PyPDF2.errors
 from utils.constants import Constants
 from utils.gcs import get_gcs_bucket
 from utils.image_ocr import extract_text_from_image
-from utils.misc import extract_text_from_html, source_separator, text_artifact_filename
-from utils.pdf import merge_pdfs, extract_text_from_pdf
+from utils.misc import extract_text_from_html, text_artifact_filename
+from utils.pdf import merge_pdfs, extract_pages_from_pdf
 from models.input import ResolvedInput
+from models.ledger import Unit
+from models.provenance import SourceSpan
+from services.unitizer import unitize
 from errors import ErrorCode, SimplifyError
 
 logger = logging.getLogger(__name__)
@@ -127,36 +130,41 @@ def validate_extracted_text_length(text: str) -> None:
         )
 
 
-def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
-    """Extract plain text from PDF, TXT, DOCX, HTML, or image bytes."""
+def extract_pages_from_bytes(file_bytes: bytes, filename: str) -> list[tuple[int, str]]:
+    """Extract text from file bytes, segmented into (page_number, page_text)
+    pairs, 1-indexed, in document order.
+
+    Every format except PDF has no intrinsic paging concept and yields at
+    most one entry, (1, whole_file_text) -- omitted entirely (returns [])
+    if that text is empty/whitespace-only. PDFs yield one entry per page
+    that has extractable text; a page with none is omitted, not
+    renumbered (see utils.pdf.extract_pages_from_pdf).
+
+    This is the extraction entry point resolve_uploaded_files calls: it
+    needs page boundaries to build per-(file, page) SourceSpan provenance
+    (see services.unitizer). There is no flat-text variant any more (see
+    PRD 02 §9) -- a caller that only wants whole-file text can compute
+    "\\n\\n".join(text for _, text in extract_pages_from_bytes(...)).
+    """
     ext = _get_extension(filename)
 
     if not ext:
         raise SimplifyError(ErrorCode.UNSUPPORTED_FILE_TYPE, detail=f"filename has no extension: {filename}")
 
     if ext == "txt":
-        return file_bytes.decode("utf-8", errors="replace")
+        text = file_bytes.decode("utf-8", errors="replace")
+        return [(1, text)] if text.strip() else []
 
     if ext == "pdf":
         try:
-            return extract_text_from_pdf(file_bytes)
+            return extract_pages_from_pdf(file_bytes)
         except PyPDF2.errors.FileNotDecryptedError as exc:
-            # Verified against the actual installed PyPDF2 3.0.1: a genuinely
-            # password-protected PDF raises this specific subclass. None of
-            # PyPDF2's exceptions are ValueError/FileNotFoundError/SimplifyError,
-            # so uncaught they fall through to a generic 500 (edge-case review
-            # Finding 6). Distinguish the "encrypted" case from "corrupt" so
-            # the user gets an actionable, specific message.
             raise SimplifyError(
                 ErrorCode.FILE_PARSE_FAILED,
                 detail=f"{filename} appears to be password-protected. Please upload an unencrypted PDF.",
                 original=exc,
             ) from exc
         except PyPDF2.errors.PyPdfError as exc:
-            # Base class of every other PyPDF2 read failure (EmptyFileError
-            # for a zero-byte file, PdfReadError for garbage bytes / a
-            # mislabeled non-PDF extension, PdfStreamError, etc.) -- all
-            # verified to raise from this call for the corresponding inputs.
             raise SimplifyError(
                 ErrorCode.FILE_PARSE_FAILED,
                 detail=f"{filename} could not be read -- it may be corrupted, empty, "
@@ -174,39 +182,32 @@ def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
 
         try:
             doc = Document(io.BytesIO(file_bytes))
-            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
         except RuntimeError:
             raise
         except Exception as exc:
-            # python-docx raises whatever the underlying zip/XML parser raises
-            # for a corrupt or non-DOCX file (zipfile.BadZipFile, KeyError for
-            # a missing part, docx.opc.exceptions.PackageNotFoundError, etc.) --
-            # none of these are SimplifyError/ValueError, so uncaught they fall
-            # through to a generic 500 (see edge-case review Finding 6, which
-            # verified the equivalent PyPDF2 gap; python-docx is the same
-            # class of bug). Reclassify as a clean, actionable FILE_PARSE_FAILED.
             raise SimplifyError(
                 ErrorCode.FILE_PARSE_FAILED,
                 detail=f"{filename} could not be read as a DOCX file -- it may be "
                        f"corrupted or not actually a DOCX file ({type(exc).__name__}).",
                 original=exc,
             ) from exc
+        return [(1, text)] if text.strip() else []
 
     if ext in {"html", "htm"}:
         try:
-            return extract_text_from_html(file_bytes)
+            text = extract_text_from_html(file_bytes)
         except Exception as exc:
-            # BeautifulSoup's stdlib html.parser backend is extremely lenient
-            # and rarely raises, but guard the boundary anyway for defense in
-            # depth/symmetry with the other extractors (Finding 6).
             raise SimplifyError(
                 ErrorCode.FILE_PARSE_FAILED,
                 detail=f"{filename} could not be read as an HTML file ({type(exc).__name__}).",
                 original=exc,
             ) from exc
+        return [(1, text)] if text.strip() else []
 
     if ext in Constants.Uploads.IMAGE_EXTENSIONS:
-        return extract_text_from_image(file_bytes, ext)
+        text = extract_text_from_image(file_bytes, ext)
+        return [(1, text)] if text.strip() else []
 
     raise SimplifyError(ErrorCode.UNSUPPORTED_FILE_TYPE, detail=f"extension: {ext}")
 
@@ -238,6 +239,13 @@ def resolve_uploaded_files(
     tolerated regardless of this flag -- those are hard stops on the request
     itself, not a per-file quality issue a skip can fix. There is no
     per-file byte limit -- only the aggregate cap applies.
+
+    `ResolvedInput.provenance` carries one SourceSpan per (file, page) that
+    contributed non-blank text, in document order -- the compact map
+    services.unitizer.unitize later expands into list[Unit] (see PRD 02
+    §4.1). No `--- Source: ... ---` marker is written into `text` any more;
+    file identity is carried structurally by `provenance` instead (PRD 02
+    §4.6).
     """
     files = [upload for upload in uploads if upload and upload.filename]
     if not files:
@@ -245,24 +253,18 @@ def resolve_uploaded_files(
     if len(files) > max_file_count:
         raise ValueError(f"Upload supports at most {max_file_count} files")
 
-    text_parts: list[str] = []
+    text_parts: list[str] = []          # one entry per (file, page) block, pre-stripped
+    provenance: list[SourceSpan] = []
+    global_line_count = 0
     merge_candidates: list[tuple[bytes, str]] = []
     filenames: list[str] = []
     skipped_files: list[str] = []
-    # Parallel to skipped_files: the actual exception raised for each
-    # skipped file, so a single-file request that fails can re-raise its
-    # own specific, already-classified error (see the `not filenames` check
-    # below) instead of always collapsing to a generic EMPTY_DOCUMENT.
     skipped_errors: list[Exception] = []
     aggregate_bytes = 0
 
     for upload in files:
         filename = upload.filename
 
-        # Extension check happens before reading bytes (as before this
-        # change) so an unsupported file never counts toward the byte/
-        # aggregate limits below -- still tolerable (skippable) under
-        # tolerate_unusable_files, same as an extraction failure.
         if not is_allowed_extension(filename):
             exc = ValueError("File must be PDF, TXT, DOCX, HTML, or an image (PNG/JPG/WEBP/HEIC)")
             if tolerate_unusable_files:
@@ -273,24 +275,18 @@ def resolve_uploaded_files(
             raise exc
 
         file_bytes = upload.read()
-        # Request-level hard stop: never tolerated, regardless of
-        # tolerate_unusable_files -- skipping a file doesn't "give back" the
-        # bytes it already consumed against the request's own size budget.
         aggregate_bytes += len(file_bytes)
         if aggregate_bytes > max_aggregate_bytes:
             limit_mb = max_aggregate_bytes / (1024 * 1024)
             raise ValueError(f"Combined file size is too large (max {limit_mb:g} MB total)")
 
         try:
-            extracted_text = extract_text_from_bytes(file_bytes, filename)
-            validate_text_storable(extracted_text, field=f"{filename}'s extracted text")
+            pages = extract_pages_from_bytes(file_bytes, filename)
+            for page_num, page_text in pages:
+                validate_text_storable(page_text, field=f"{filename} (page {page_num})'s extracted text")
+            extracted_text = "\n\n".join(t for _, t in pages)
             real_content = extracted_text.strip()
             if len(real_content) < Constants.Uploads.MIN_MEANINGFUL_CONTENT_CHARS:
-                # Mirrors the image-OCR EMPTY_DOCUMENT path for every other
-                # format: a scanned/no-text-layer PDF, a blank docx/txt/html,
-                # etc. must not silently become a non-empty "--- Source: ... ---"
-                # scaffolding-only document that sails past every downstream
-                # check (edge-case review Finding 2).
                 raise SimplifyError(
                     ErrorCode.EMPTY_DOCUMENT,
                     detail=f"{filename} produced no meaningful extractable text (likely a "
@@ -305,7 +301,16 @@ def resolve_uploaded_files(
             raise
 
         filenames.append(filename)
-        text_parts.append(f"{source_separator(filename)}{real_content}")
+        for page_num, page_text in pages:
+            page_text = page_text.strip()
+            if not page_text:
+                continue
+            page_line_count = len(page_text.split("\n"))
+            start = global_line_count
+            end = start + page_line_count - 1
+            provenance.append(SourceSpan(file=filename, page=page_num, start_line=start, end_line=end))
+            text_parts.append(page_text)
+            global_line_count = end + 1
 
         ext = _get_extension(filename)
         if ext in {"pdf", "txt"} or ext in Constants.Uploads.IMAGE_EXTENSIONS:
@@ -316,27 +321,14 @@ def resolve_uploaded_files(
             )
 
     if not filenames:
-        # Only reachable under tolerate_unusable_files (otherwise the loop
-        # above would already have raised on the first unusable file) --
-        # every uploaded file was individually unusable.
         if len(files) == 1 and skipped_errors:
-            # A single-file request isn't really a "batch" -- collapsing its
-            # one already-classified failure into the generic "none of
-            # several files worked" EMPTY_DOCUMENT message would discard
-            # actionable detail (e.g. a password-protected PDF would
-            # misleadingly surface as "not a scanned image"). Re-raise the
-            # original error instead (Finding 5/6).
             raise skipped_errors[0]
         raise SimplifyError(
             ErrorCode.EMPTY_DOCUMENT,
             detail="None of the uploaded files contained readable text.",
         )
 
-    combined_text = "\n".join(text_parts).strip()
-    # Fail fast: reject an over-limit document up front (before the (possibly
-    # slow) PDF merge below, before any job is enqueued, and before any
-    # pipeline/LLM step runs) rather than letting it run every pipeline step
-    # only to fail late on an unrelated output-token-cap error.
+    combined_text = "\n".join(text_parts)
     validate_extracted_text_length(combined_text)
 
     combined_pdf_bytes = None
@@ -359,8 +351,22 @@ def resolve_uploaded_files(
         file_count=file_count,
         file_types=file_types,
         skipped_files=skipped_files,
+        provenance=provenance,
     ), combined_pdf_bytes
 
 
 def resolve_input_from_job_doc(job) -> str:  # job: models.job.JobDoc
     return job.input_text or ""
+
+
+def resolve_units_from_job_doc(job) -> list[Unit]:  # job: models.job.JobDoc
+    """Reconstruct the deterministic unit list for a job from its persisted
+    (input_text, input_provenance) pair. Call once, in the worker,
+    immediately before grounding (03) -- this is the read side of the
+    provenance-map design (PRD 02 §4.1): the API computed and persisted
+    input_provenance at job-creation time; this is where it gets spent,
+    materializing the (larger, per-line) Unit list only in memory, never
+    back to Firestore. The actual call site inside the pipeline run is
+    06's (pipeline-orchestration) to wire up.
+    """
+    return unitize(job.input_text or "", job.input_provenance)

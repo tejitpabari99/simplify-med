@@ -103,10 +103,6 @@ def extract_text_from_html(html_content: bytes) -> str:
 # String formatting (used by services/care_plan_input.py)
 # ---------------------------------------------------------------------------
 
-def source_separator(filename: str) -> str:
-    return f"\n\n--- Source: {filename} ---\n"
-
-
 def text_artifact_filename(filename: str) -> str:
     stem = filename.rsplit(".", 1)[0] if "." in filename else filename
     return f"{stem}.txt"
