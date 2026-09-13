@@ -119,7 +119,7 @@ export default function ResultScreen({ jobDoc, jobId, deletedRef, onRestart }: R
               shape, degrade to a message here instead of losing the whole
               result screen (or, absent the app-root boundary, the whole page). */}
           <ErrorBoundary title="We couldn't display your care plan" onReset={onRestart}>
-            <CarePlanView result={care_plan} hideLowPriority />
+            <CarePlanView result={care_plan} />
           </ErrorBoundary>
           <button className="cta-btn" onClick={() => downloadReport(care_plan, grading)}>
             Download report
