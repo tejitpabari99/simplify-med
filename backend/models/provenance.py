@@ -15,6 +15,8 @@ small: it carries a line RANGE, never a copy of the text in that range.
 """
 from __future__ import annotations
 
+from pydantic import Field
+
 from .base import JsonModel
 
 
@@ -34,3 +36,20 @@ class SourceSpan(JsonModel):
     page: int
     start_line: int
     end_line: int
+
+
+class JobInputPayload(JsonModel):
+    """Wire shape of the GCS object services.care_plan_input.upload_job_input
+    writes and load_job_input reads back -- the whole reason this object
+    exists is to carry input_text and input_provenance from the API to the
+    worker as one payload (PRD 09 §4.1), since the one function that ever
+    consumes either (services.unitizer.unitize) always consumes both.
+
+    Like SourceSpan, this model IS written to a persistence layer (a GCS
+    object, not Firestore) -- unlike Unit/Fact, which never touch storage
+    at all. Unlike SourceSpan, it never appears as a JobDoc field; it is
+    the object input_payload_gcs_uri points AT, not a value stored inline.
+    """
+
+    text: str
+    provenance: list[SourceSpan] = Field(default_factory=list)
