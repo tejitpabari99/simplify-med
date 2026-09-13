@@ -23,7 +23,7 @@ const completedJobDoc: JobDoc = {
       { name: 'combined', target: 'before', grade: 42, grade_breakdown: null, reasoning: null },
       { name: 'combined', target: 'after', grade: 78, grade_breakdown: null, reasoning: null },
     ], enabled: true, graded_at: null },
-    care_plan: { doc_type: 'care_plan', urgency: 'normal', version: '1.2', summary: 'Rest up.', reason_for_visit: [], diagnosis: { details: [] }, medications: [], tests: [], procedures: [], other: [], follow_up: [], warning_signs: [], questions: [], low_priority: [] },
+    care_plan: { doc_type: 'care_plan', version: '1.2', summary: 'Rest up.', reason_for_visit: [], diagnosis: { details: [] }, medications: [], tests: [], procedures: [], other: [], follow_up: [], warning_signs: [], questions: [], low_priority: [] },
   },
 };
 
@@ -58,14 +58,14 @@ describe('ResultScreen', () => {
     expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent(/problem creating your care plan/i);
   });
 
-  it('does not render "Other Items From Your Visit" even when low_priority has entries', () => {
+  it('renders "Other Items From Your Visit" when low_priority has entries', () => {
     const jobDoc: JobDoc = {
       status: 'completed', stage: 5, name: 'With Low Priority', error_data: null,
       output_data: {
         metrics: { created_at: '2026-01-05T10:00:00Z' },
         grading: { entries: [], enabled: false, graded_at: null },
         care_plan: {
-          doc_type: 'care_plan', urgency: 'normal', version: '1.2', summary: 'Rest up.',
+          doc_type: 'care_plan', version: '1.2', summary: 'Rest up.',
           reason_for_visit: [], diagnosis: { details: [] }, medications: [], tests: [],
           procedures: [], other: [], follow_up: [], warning_signs: [], questions: [],
           low_priority: ['Drink more water'],
@@ -73,8 +73,8 @@ describe('ResultScreen', () => {
       },
     };
     render(<ResultScreen jobDoc={jobDoc} jobId="job-5" deletedRef={deletedRef} onRestart={vi.fn()} />);
-    expect(screen.queryByText('Other Items From Your Visit')).not.toBeInTheDocument();
-    expect(screen.queryByText('Drink more water')).not.toBeInTheDocument();
+    expect(screen.getByText('Other Items From Your Visit')).toBeInTheDocument();
+    expect(screen.getByText('Drink more water')).toBeInTheDocument();
   });
 
   it('renders the error message and Try again button on error, calling onRestart when clicked', async () => {
@@ -116,7 +116,7 @@ describe('ResultScreen', () => {
       status: 'completed', stage: 5, name: 'No Grading', error_data: null,
       output_data: {
         metrics: { created_at: '2026-01-05T10:00:00Z' },
-        care_plan: { doc_type: 'care_plan', urgency: 'normal', version: '1.2', summary: 'Drink water.', reason_for_visit: [], diagnosis: { details: [] }, medications: [], tests: [], procedures: [], other: [], follow_up: [], warning_signs: [], questions: [], low_priority: [] },
+        care_plan: { doc_type: 'care_plan', version: '1.2', summary: 'Drink water.', reason_for_visit: [], diagnosis: { details: [] }, medications: [], tests: [], procedures: [], other: [], follow_up: [], warning_signs: [], questions: [], low_priority: [] },
         // grading key omitted entirely — simulates a partial/malformed write.
       },
     };
