@@ -9,6 +9,7 @@ from care_plan.pipeline import CarePlanPipeline
 from errors import SimplifyError, ErrorCode
 from models.care_plan.care_plan import CarePlan
 from models.ledger import Fact, Unit
+from models.review import Correction
 from utils.constants import Constants
 from care_plan.pipeline import _llm_schema
 
@@ -223,3 +224,111 @@ def test_assemble_and_render_raises_on_empty_fact_list():
         pipeline.assemble_and_render(facts=[], substitution_candidates=[], preserve_and_define_terms=[], abbreviations=[])
     assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
     assert called is False
+
+
+# ---------------------------------------------------------------------------
+# review()/correct() schema-boundary tests (PRD 05 §7.1, §7.2)
+# ---------------------------------------------------------------------------
+
+def _minimal_care_plan() -> CarePlan:
+    return CarePlan.model_validate(_minimal_care_plan_dict())
+
+
+def test_review_schema_is_generated_from_review_result():
+    schema = json.loads(pipeline_module._REVIEW_SCHEMA)
+    props = schema["properties"]
+
+    assert "verdict" in props
+    assert "corrections" in props
+    assert "coverage" in props
+
+
+def test_review_uses_long_form_token_budget_and_json_temperature():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    captured_kwargs = {}
+
+    def _fake_generate_json(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return {"verdict": "pass"}
+
+    pipeline._generate_json = _fake_generate_json
+    pipeline.review(_minimal_facts(), _minimal_care_plan())
+
+    assert captured_kwargs["max_tokens"] == Constants.Llm.MAX_TOKENS_LONG_FORM
+    assert captured_kwargs["temperature"] == Constants.Llm.TEMPERATURE_JSON
+
+
+def test_review_rejects_non_dict_llm_output():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    pipeline._generate_json = lambda *args, **kwargs: ["not", "a", "dict"]
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.review(_minimal_facts(), _minimal_care_plan())
+    assert exc_info.value.error_code == ErrorCode.LLM_INVALID_JSON
+
+
+def test_review_rejects_invalid_verdict_value():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    pipeline._generate_json = lambda *args, **kwargs: {"verdict": "maybe"}
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.review(_minimal_facts(), _minimal_care_plan())
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+
+
+def test_correct_uses_long_form_token_budget_and_json_temperature_when_corrections_present():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    captured_kwargs = {}
+
+    def _fake_generate_json(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return {**_minimal_care_plan_dict(), "summary": ""}
+
+    pipeline._generate_json = _fake_generate_json
+    corrections = [Correction(op="remove", path="summary")]
+
+    pipeline.correct(_minimal_care_plan(), corrections, [], [], [])
+
+    assert captured_kwargs["max_tokens"] == Constants.Llm.MAX_TOKENS_LONG_FORM
+    assert captured_kwargs["temperature"] == Constants.Llm.TEMPERATURE_JSON
+
+
+def test_correct_short_circuits_on_empty_corrections():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    called = False
+
+    def _fake_generate_json(*args, **kwargs):
+        nonlocal called
+        called = True
+        return _minimal_care_plan_dict()
+
+    pipeline._generate_json = _fake_generate_json
+    care_plan = _minimal_care_plan()
+
+    result = pipeline.correct(care_plan, [], [], [], [])
+
+    assert called is False
+    assert result is care_plan
+
+
+def test_correct_rejects_non_dict_llm_output():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    pipeline._generate_json = lambda *args, **kwargs: ["not", "a", "dict"]
+    corrections = [Correction(op="remove", path="summary")]
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.correct(_minimal_care_plan(), corrections, [], [], [])
+    assert exc_info.value.error_code == ErrorCode.LLM_INVALID_JSON
+
+
+def test_correct_rejects_extra_llm_key():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    pipeline._generate_json = lambda *args, **kwargs: {
+        **_minimal_care_plan_dict(),
+        "importance": "high",
+    }
+    corrections = [Correction(op="remove", path="summary")]
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.correct(_minimal_care_plan(), corrections, [], [], [])
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
