@@ -4,6 +4,7 @@ import pytest
 
 from care_plan.pipeline import (
     _CLARIFY_PROMPT,
+    _GROUND_PROMPT,
     _SIMPLIFY_PROMPT,
     _STRUCTURE_PROMPT,
     _STRUCTURING_SCHEMA,
@@ -24,6 +25,10 @@ def test_clarify_prompt_is_non_empty_string():
 
 def test_structure_prompt_is_non_empty_string():
     assert isinstance(_STRUCTURE_PROMPT, str) and len(_STRUCTURE_PROMPT) > 0
+
+
+def test_ground_prompt_is_non_empty_string():
+    assert isinstance(_GROUND_PROMPT, str) and len(_GROUND_PROMPT) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +75,19 @@ def test_structure_prompt_raises_on_missing_key():
     with pytest.raises(KeyError):
         _STRUCTURE_PROMPT.format(schema='{"type":"object"}')
         # missing `text`
+
+
+def test_ground_prompt_accepts_all_keys():
+    result = _GROUND_PROMPT.format(schema="{}", abbrev_block="abbr", units_block="[1] text")
+    assert "abbr" in result
+    assert "[1] text" in result
+    assert "{}" in result
+
+
+def test_ground_prompt_raises_on_missing_key():
+    with pytest.raises(KeyError):
+        _GROUND_PROMPT.format(schema="{}", abbrev_block="abbr")
+        # missing `units_block`
 
 
 # ---------------------------------------------------------------------------
@@ -219,3 +237,26 @@ JSON OUTPUT:"""
 
     actual = _STRUCTURE_PROMPT.format(schema=_STRUCTURING_SCHEMA, text=text)
     assert actual == expected
+
+
+# ---------------------------------------------------------------------------
+# 5. Ground prompt content guards (PRD 03 §7.1)
+# ---------------------------------------------------------------------------
+
+def test_ground_prompt_contains_contrast_dye_boundary_rule():
+    assert "contrast dye" in _GROUND_PROMPT
+
+
+def test_ground_prompt_lists_all_eight_categories():
+    for category in (
+        "reason_for_visit",
+        "diagnosis",
+        "medications",
+        "tests",
+        "procedures",
+        "other",
+        "follow_up",
+        "warning_signs",
+    ):
+        assert category in _GROUND_PROMPT
+    assert "low_priority" not in _GROUND_PROMPT
