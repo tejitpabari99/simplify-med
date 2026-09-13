@@ -15,7 +15,7 @@ from utils.firebase import (
     verify_oidc_token,
 )
 from services.care_plan_pipeline import run_care_plan_pipeline
-from services.care_plan_input import resolve_input_from_job_doc
+from services.care_plan_input import resolve_input_from_job_doc, resolve_units_from_job_doc
 from models.pipeline_events import AdapterStepEvent, AdapterResult, AdapterError
 from models.care_plan.envelope import CarePlanInternal
 from models.job import JobDoc
@@ -30,6 +30,26 @@ from errors import ErrorCode, build_error_data, build_error_data_from_exc
 
 logger = logging.getLogger(__name__)
 worker_bp = Blueprint("worker", __name__)
+
+
+def _strip_internal_provenance(care_plan: dict) -> None:
+    """Remove fields that exist purely for the pipeline's own use --
+    evidence citations into the grounding ledger -- and must never reach
+    the API response, the frontend, or the PDF (brief §3.10; PRD 01
+    §4.1/§9: a fact-ID list is exactly as internal as the ledger it cites
+    into, regardless of size). Mutates `care_plan` (the
+    `output_data["care_plan"]` dict, already a plain dict via
+    `envelope.to_dict()` by the time this runs) in place.
+
+    `summary_fact_ids` is one flat top-level key. `source_fact_ids` is
+    nested one-per-item inside six separate item lists, so this cannot be
+    a single `.pop()` the way `raw`'s removal could be -- each list has
+    to be walked.
+    """
+    care_plan.pop("summary_fact_ids", None)
+    for _key in ("medications", "tests", "procedures", "other", "follow_up", "warning_signs"):
+        for _item in care_plan.get(_key, []):
+            _item.pop("source_fact_ids", None)
 
 
 # ── Job execution handler ──────────────────────────────────────────────────────
@@ -71,7 +91,7 @@ def execute_job(job_id: str):
                     # while that attempt may still legitimately be in flight
                     # (or may have crashed without reaching a terminal state).
                     # Re-running the pipeline here would re-execute the whole
-                    # 5-stage LLM pipeline a second time, double-billing every
+                    # pipeline (four sequential LLM calls) a second time, double-billing every
                     # Vertex AI call it already made (edge-case review Finding
                     # 7). Treat this delivery as a no-op: the original attempt
                     # (or its own _check_timeout below) will reach a terminal
@@ -117,6 +137,7 @@ def execute_job(job_id: str):
 
             source_kind = job.input_source_kind
             text = resolve_input_from_job_doc(job)
+            units = resolve_units_from_job_doc(job)
 
             # Defensive floor (belt-and-suspenders alongside the per-file check
             # in services.care_plan_input.resolve_uploaded_files): reject not
@@ -141,7 +162,7 @@ def execute_job(job_id: str):
             pipeline_result = None
             pipeline_error_data: dict | None = None
 
-            for event in run_care_plan_pipeline(text, metrics, grading_enabled, source_kind=source_kind):
+            for event in run_care_plan_pipeline(text, units, metrics, grading_enabled, source_kind=source_kind):
                 if isinstance(event, AdapterResult):
                     pipeline_result = event
                 elif isinstance(event, AdapterError):
@@ -193,14 +214,14 @@ def execute_job(job_id: str):
             output_data["metrics"]["saved_id"] = job_id
 
             # Jobs are short-lived and the UI never reads raw text/simplified_text/
-            # clarified_text, nor the original input text — drop the whole (optional) `raw`
-            # key and the (optional) `input.text` key so completed docs stay well
+            # clarified_text, internal fact-ID provenance, nor the original input text —
+            # drop those fields so completed docs stay well
             # under Firestore's 1 MiB doc limit and don't risk the ~1500-byte auto-indexed
             # field limit on these full-document-length strings. `input.text` is popped
             # rather than replacing the whole `input` dict so it round-trips cleanly back
             # into TextInput (text: str | None = None) with no model or frontend change.
-            output_data.get("care_plan", {}).pop("raw", None)
             output_data.get("input", {}).pop("text", None)
+            _strip_internal_provenance(output_data.get("care_plan", {}))
 
             # UI (ResultScreen.tsx) reads only the two `combined` grading entries
             # (before/after); the other 12 non-`combined` method entries are
