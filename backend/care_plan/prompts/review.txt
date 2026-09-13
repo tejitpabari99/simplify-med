@@ -14,9 +14,9 @@ JOB 1 -- FIDELITY. Find every place the care plan says something its fact(s) do 
 
 Do NOT judge which array/section an item belongs to -- only whether its content is true to its fact(s). Do not flag style, tone, or word choice.
 
-SUMMARY -- summary was built from the facts listed in summary_fact_ids. Check that every cited fact actually supports what summary says about it, and that summary asserts nothing outside those cited facts. If summary itself has drifted from its citations, emit {"op": "remove", "path": "summary"} -- you may not supply replacement text for it.
+SUMMARY -- summary was built from the facts listed in summary_fact_ids. Check that every cited fact actually supports what summary says about it, and that summary asserts nothing outside those cited facts. If summary itself has drifted from its citations, emit {{"op": "remove", "path": "summary"}} -- you may not supply replacement text for it.
 
-QUESTIONS -- each entry in questions must not presuppose any clinical fact, diagnosis, or concern absent from the fact ledger. If one does, emit {"op": "remove", "path": "questions[N]"} for that entry.
+QUESTIONS -- each entry in questions must not presuppose any clinical fact, diagnosis, or concern absent from the fact ledger. If one does, emit {{"op": "remove", "path": "questions[N]"}} for that entry.
 
 JOB 2 -- COVERAGE. Below is the full numbered fact ledger. For EVERY fact, in order, decide: does this fact's content appear somewhere in the care plan, in its own words or the plan's rewritten words -- it does not need to match verbatim? Answer for every single fact listed; do not skip any, and do not answer for a fact_id not listed.
 

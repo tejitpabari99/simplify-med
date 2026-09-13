@@ -443,6 +443,57 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
     return model.model_copy(update=updates) if updates else model
 
 
+_WHY_PATH_RE = re.compile(r"^(medications|tests|procedures|other)\[\d+\]\.why$")
+
+
+def _targets_removed_item(path: str, removed_items: set[str]) -> bool:
+    """True if `path`'s leading `array[N]` segment matches one of the
+    `removed_items` path strings -- i.e. a `correct`/`not_stated` targeting
+    a field of an item some other correction already `remove`s (PRD 05
+    §4.5's contradiction guard: remove wins)."""
+    m = re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*\[\d+\]", path)
+    if not m:
+        return False
+    return m.group(0) in removed_items
+
+
+def _sanitize_review_result(result: ReviewResult, care_plan: CarePlan, facts: list[Fact]) -> ReviewResult:
+    """Deterministic post-validation of a reviewer's raw output (PRD 05
+    §4.5): drop-and-log, never fail the step, mirroring 03's per-fact
+    policy. Drops a correction whose path doesn't resolve against
+    `care_plan`, a `not_stated` outside the four scoped `why` fields, or a
+    `correct` with no value; lets `remove` win over a `correct`/`not_stated`
+    targeting the same array item; and fills in a `present=False` coverage
+    entry for any ledger fact the reviewer's coverage walk omitted, dropping
+    any coverage entry citing a fact_id not in the ledger."""
+    plan_dict = care_plan.model_dump(mode="json")
+    clean: list[Correction] = []
+    for c in result.corrections:
+        found, _ = _resolve_path(plan_dict, c.path)
+        if not found:
+            logger.warning("review: dropping correction with unresolvable path %r", c.path)
+            continue
+        if c.op == "not_stated" and not _WHY_PATH_RE.match(c.path):
+            logger.warning("review: dropping not_stated outside the four why fields: %r", c.path)
+            continue
+        if c.op == "correct" and not c.value:
+            logger.warning("review: dropping correct with no value: %r", c.path)
+            continue
+        clean.append(c)
+    # remove wins over correct/not_stated on the same array item (contradiction guard)
+    removed_items = {c.path for c in clean if c.op == "remove"}
+    clean = [c for c in clean if c.op == "remove" or not _targets_removed_item(c.path, removed_items)]
+
+    fact_ids = {f.id for f in facts}
+    coverage = [e for e in result.coverage if e.fact_id in fact_ids]
+    missing = fact_ids - {e.fact_id for e in coverage}
+    if missing:
+        logger.warning("review: coverage omitted %d fact id(s); treating as not-present", len(missing))
+        coverage += [CoverageEntry(fact_id=i, present=False) for i in missing]
+
+    return result.model_copy(update={"corrections": clean, "coverage": coverage})
+
+
 class CarePlanPipeline:
     """Care plan pipeline with deterministic term detection."""
 
@@ -562,6 +613,30 @@ class CarePlanPipeline:
             raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
 
         return _verify_assembly(model, facts)
+
+    def review(self, facts: list[Fact], care_plan: CarePlan) -> ReviewResult:
+        """Review: one LLM call producing field-level corrections and a
+        per-fact coverage walk (brief §3.5). Never mutates care_plan. Raises
+        SimplifyError on unrecoverable failure -- iter_steps' non-fatal
+        wrapping is 06's to wire (PRD 05 §4.8: review is non-fatal)."""
+        prompt = _REVIEW_PROMPT.format(
+            schema=_REVIEW_SCHEMA,
+            facts_block=_format_facts_for_prompt(facts),   # reuses 04's helper (PRD 04 §4.3)
+            care_plan_block=json.dumps(care_plan.model_dump(mode="json"), indent=2),
+        )
+        raw = self._generate_json(
+            prompt,
+            temperature=Constants.Llm.TEMPERATURE_JSON,
+            max_tokens=Constants.Llm.MAX_TOKENS_LONG_FORM,
+        )
+        if not isinstance(raw, dict):
+            raise SimplifyError(ErrorCode.LLM_INVALID_JSON, detail=f"expected dict, got {type(raw)}")
+        try:
+            result = ReviewResult.model_validate(raw)
+        except ValidationError as e:
+            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
+
+        return _sanitize_review_result(result, care_plan, facts)
 
     def iter_steps(
         self,
