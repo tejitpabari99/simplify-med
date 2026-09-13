@@ -54,3 +54,22 @@ def delete_gcs_object(gcs_uri: str) -> None:
         if isinstance(exc, NotFound):
             return
         logger.exception("gcs: delete_gcs_object failed for uri=%s", gcs_uri)
+
+
+def download_gcs_string(gcs_uri: str) -> str:
+    """Download and return the text contents of a gs:// object.
+
+    Unlike delete_gcs_object, this does NOT swallow failures -- a caller
+    that needs this content cannot proceed without it (see
+    services.care_plan_input.load_job_input, PRD 09 §4.9, which is this
+    function's only caller). Raises google.api_core.exceptions.NotFound if
+    the object doesn't exist, or whatever the underlying client raises for
+    any other failure (permission denied, network error, etc.) -- the
+    caller is responsible for classifying and handling these, not this
+    function.
+    """
+    if not gcs_uri.startswith("gs://"):
+        raise ValueError(f"download_gcs_string called with non-gs:// uri={gcs_uri}")
+    _, _, rest = gcs_uri.partition("gs://")
+    bucket_name, _, blob_name = rest.partition("/")
+    return _gcs_client().bucket(bucket_name).blob(blob_name).download_as_text()
