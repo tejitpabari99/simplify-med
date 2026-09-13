@@ -14,8 +14,10 @@ Steps:
 """
 
 import copy
+import difflib
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Callable, Generator
 
@@ -32,6 +34,7 @@ WrapStepFn = Callable[[int, str, Callable[[], Any]], Any]
 from models.base import JsonModel
 from models.care_plan import CarePlan
 from models.ledger import Fact, FactCategory, Unit
+from models.review import Correction, CoverageEntry, ReviewResult
 from utils.llm import LLMClient
 from utils.term_detection import (
     build_glossary_from_simplified_text,
@@ -280,11 +283,44 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 _GROUND_PROMPT    = (_PROMPTS_DIR / "ground.txt").read_text(encoding="utf-8")
 _ASSEMBLE_PROMPT = (_PROMPTS_DIR / "assemble_and_render.txt").read_text(encoding="utf-8")
+_REVIEW_PROMPT = (_PROMPTS_DIR / "review.txt").read_text(encoding="utf-8")
+_CORRECT_PROMPT = (_PROMPTS_DIR / "correct.txt").read_text(encoding="utf-8")
+_STYLE_RULES = (_PROMPTS_DIR / "_style_rules.txt").read_text(encoding="utf-8")
 
 _ASSEMBLE_SCHEMA = json.dumps(
     _llm_schema(CarePlan, exclude={"terms", "note"}),
     indent=2,
 )
+
+_REVIEW_SCHEMA = json.dumps(_llm_schema(ReviewResult, exclude=set()), indent=2)
+
+
+# JSON path addressing scheme shared by review() and correct() (PRD 05 §4.2) --
+# the machine-readable contract between the two LLM calls and their respective
+# deterministic post-validation layers.
+_PATH_SEGMENT_RE = re.compile(r"([a-zA-Z_][a-zA-Z0-9_]*)(\[(\d+)\])?")
+
+
+def _resolve_path(root: dict, path: str) -> tuple[bool, Any]:
+    """Walk `path` into `root` (a CarePlan.model_dump(mode="json") dict).
+    Returns (found, value); found=False for an out-of-range index or an
+    unknown field name -- the caller treats that as an invalid path to
+    drop, never as a crash (PRD 05 §4.5)."""
+    node: Any = root
+    for segment in path.split("."):
+        m = _PATH_SEGMENT_RE.fullmatch(segment)
+        if not m:
+            return False, None
+        name, _, idx = m.groups()
+        if not isinstance(node, dict) or name not in node:
+            return False, None
+        node = node[name]
+        if idx is not None:
+            i = int(idx)
+            if not isinstance(node, list) or i >= len(node):
+                return False, None
+            node = node[i]
+    return True, node
 
 _FACT_CATEGORY_ORDER = (
     "reason_for_visit", "diagnosis", "medications", "tests",
@@ -507,6 +543,7 @@ class CarePlanPipeline:
         prompt = _ASSEMBLE_PROMPT.format(
             schema=_ASSEMBLE_SCHEMA,
             facts_block=_format_facts_for_prompt(facts),
+            style_rules=_STYLE_RULES,
             sub_block=format_substitution_candidates_for_prompt(substitution_candidates),
             medical_block=format_medical_terms_for_prompt(preserve_and_define_terms),
             abbrev_block=format_abbreviations_for_prompt(abbreviations),
