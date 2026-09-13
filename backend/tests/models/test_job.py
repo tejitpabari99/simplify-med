@@ -27,9 +27,8 @@ def input_fields():
     }
 
 
-def test_for_single_sets_shared_trace(now, input_fields):
+def test_for_single_sets_trace(now, input_fields):
     job = JobDoc.for_single(user_id="u2", now=now, trace_id="abc123", input_fields=input_fields)
-    assert job.shared is False
     assert job.trace_id == "abc123"
     assert job.status == StatusEnum.not_started
 
