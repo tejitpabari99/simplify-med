@@ -1,0 +1,55 @@
+You are assembling a plain-language care plan for a patient, using ONLY the facts listed below. Each fact was already checked against the original clinical note before it reached you; you do not see the original note, and you must not add anything beyond what a fact states.
+
+Do these four things, in this order, and nothing else:
+1. Map each fact to a care-plan item of its category (see MAPPING), recording the id of every fact each item is built from in that item's `source_fact_ids` field as you go (see SOURCE_FACT_IDS). Facts are already at clause granularity, so this is close to a one-to-one map -- most facts become exactly one item.
+2. Split each item's fact content into that item's typed fields.
+3. Render every field in plain language (see LANGUAGE RULES) -- a bounded rewrite of a few words at a time, e.g. "metoprolol 25mg BID" becomes "metoprolol 25 mg twice a day." Never rewrite a fact's meaning, only its wording.
+4. Write `summary` from the assembled whole, and list the ids of every fact it draws from in `summary_fact_ids`.
+
+FACTS (id, category, content):
+{facts_block}
+
+MAPPING -- a fact's category decides which care-plan array it becomes an item in:
+- reason_for_visit -> reason_for_visit[] (reason: a few words; description: one plain-language sentence)
+- diagnosis -> diagnosis.details[] (title, plain_name, description, what_it_means_for_you; set severity ONLY if the fact itself states a severity judgement -- otherwise leave it null, never guess). If any diagnosis fact states something changed since the last visit, put that in diagnosis.changed_since_last_visit; otherwise leave it "".
+- medications -> medications[] (why, dosage, frequency, timing, duration, instructions, side_effects_to_watch, change, status, source_fact_ids)
+- tests -> tests[] (why, description, preparation, status, source_fact_ids)
+- procedures -> procedures[] (why, what_to_expect, timeframe, status, source_fact_ids)
+- other -> other[] (why, steps[], description, frequency, duration, status, source_fact_ids)
+- follow_up -> follow_up[] (time_frame, description, status, source_fact_ids)
+- warning_signs -> warning_signs[] (what_it_might_mean, what_to_do, urgency, related_to, source_fact_ids). Set urgency ONLY if the fact states or clearly implies one of emergency / call_doctor / monitor / normal_side_effect -- otherwise leave it null, never guess between them.
+
+A medications fact whose content is a side effect that is merely listed, with no instruction to act on it, belongs in that medication's own side_effects_to_watch field -- never split out as a separate warning_signs item.
+
+SOURCE_FACT_IDS -- every medications, tests, procedures, other, follow_up, and warning_signs item must carry `source_fact_ids`: the id(s) of every fact you built it from (more than one id if MERGE below combines facts into one item). reason_for_visit and diagnosis items have no such field. Never leave source_fact_ids empty for an item you decide to include -- an item with no cited fact has nothing behind it and will not reach the patient.
+
+STATUS -- every medications, tests, procedures, other, and follow_up item requires status: "to_do" or "done". Never omit it and never leave it null. Use "done" if the fact states or clearly implies the item is already complete. If genuinely unclear, default to "to_do": telling a patient to do something already done costs one phone call; telling them a pending action is complete is a missed follow-up.
+
+NOT STATED -- if a medications, tests, procedures, or other item's `why` is not given by its fact, set why to exactly this sentence: "Not stated in your note." Do not invent a reason, and do not leave the field silently empty -- a blank field reads as an oversight; this sentence makes the gap visible and gives the patient a concrete question to ask.
+
+MERGE -- if two or more facts describe the identical underlying clinical fact (the same finding or instruction, stated more than once, possibly with different specific details), merge them into ONE item. Preserve every differing detail explicitly in the merged wording -- never drop one to shorten the sentence. Example: plaque reported separately in the left and right coronary arteries merges to "heavy plaque in your left and right heart arteries," NEVER to "heavy plaque in your heart arteries." Do not merge facts that are merely related; only merge facts that say the same thing.
+
+LOW PRIORITY -- after mapping, move an item into low_priority (as one short line, not a full item) only if it is a normal result, a routine finding, or an administrative detail: no action for the patient, and no diagnosis or plan they would want in the main sections. This is a narrow reclassification. When in doubt, leave the item in its real section.
+
+QUESTIONS -- write at most three questions a patient might reasonably ask their care team about this visit. Write none if the facts already answer everything a reader would ask -- there is no minimum. Interrogative form only. A question must not assert or presuppose any clinical fact, diagnosis, or judgement that is not already stated in the facts above; it may only ask about a genuine gap or next step.
+
+PII -- replace every person's name and every facility's name with a generic form: a clinician's name becomes "your doctor" (or "your surgeon" / "your cardiologist" / etc. if the fact itself names that specialty); a hospital or clinic name becomes "the hospital" or "the clinic." Example: "Doctor Alok Singh" becomes "your doctor." This is the one case where you do not preserve a fact's exact wording -- a generic form loses the patient no clinical information. The patient's own name, date of birth, address, and insurance details must never appear either.
+
+LANGUAGE RULES -- apply to every field you write:
+- Active voice. Address the patient as "you."
+- One idea per sentence. Keep sentences under about 20 words.
+- Expand every abbreviation. Never print "BID", "HTN", "f/u", or similar -- use the plain words.
+- Never invent a number, and never convert vague wording ("a few weeks") into an exact one ("3 weeks") unless a fact states the exact number.
+- Never add urgency, prognosis, or medical advice beyond what a fact states.
+- Start every patient action (in medications, tests, procedures, other, follow_up) with a clear verb: Take / Call / Schedule / Ask / Bring / Watch / Avoid / Continue / Stop.
+- Use these plain-language swaps where they fit naturally; do not force one that reads unnaturally:
+{sub_block}
+- Keep these medical terms exactly as written. Do NOT define them inline -- they are explained separately in the app's glossary:
+{medical_block}
+- Expand these abbreviations if any fact still contains them:
+{abbrev_block}
+
+Return JSON only, matching this schema. No markdown, no commentary.
+{schema}
+
+JSON OUTPUT:
