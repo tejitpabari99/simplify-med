@@ -35,13 +35,26 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 15 * 1024 * 1024
 
 # Enable CORS for all routes with explicit origin/header/method allow-lists
+_DEFAULT_CORS_ORIGINS = [
+    "https://juno-medical-clarity.web.app",        # production Firebase Hosting site
+    "https://juno-medical-clarity.firebaseapp.com",  # Firebase Hosting's alternate default domain
+    "http://localhost:5173",                       # frontend dev server
+]
+
+
+def _cors_allowed_origins() -> list[str]:
+    """CORS_ALLOWED_ORIGINS is a comma-separated list, e.g.
+    "https://abcd1234.ngrok-free.app,http://localhost:5173". Falls back to
+    the hardcoded production + local-dev origins when unset or empty, so
+    production behavior is unchanged with no env var configured."""
+    raw = _os.environ.get("CORS_ALLOWED_ORIGINS", "")
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    return origins or _DEFAULT_CORS_ORIGINS
+
+
 CORS(
     app,
-    origins=[
-        "https://juno-medical-clarity.web.app",        # production Firebase Hosting site
-        "https://juno-medical-clarity.firebaseapp.com",  # Firebase Hosting's alternate default domain
-        "http://localhost:5173",                       # frontend dev server
-    ],
+    origins=_cors_allowed_origins(),
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Session-Id"],
     expose_headers=["X-Session-Id", "X-Trace-Id"],

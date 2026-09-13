@@ -152,6 +152,7 @@ class Constants:
         FLASK_ENV: str = "FLASK_ENV"
         SERVICE_MODE: str = "SERVICE_MODE"
         TRUSTED_PROXY_HOPS: str = "TRUSTED_PROXY_HOPS"
+        CORS_ALLOWED_ORIGINS: str = "CORS_ALLOWED_ORIGINS"
 
     class Observability:
         SERVICE_NAME_DEFAULT: str = "backend-processing"
