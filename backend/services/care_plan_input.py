@@ -3,6 +3,7 @@ pipeline: GCS upload, file-type validation, text extraction, and multi-file
 resolution."""
 
 import io
+import json
 import logging
 import os
 import uuid
@@ -10,13 +11,13 @@ import uuid
 import PyPDF2.errors
 
 from utils.constants import Constants
-from utils.gcs import get_gcs_bucket
+from utils.gcs import get_gcs_bucket, download_gcs_string
 from utils.image_ocr import extract_text_from_image
 from utils.misc import extract_text_from_html, text_artifact_filename
 from utils.pdf import merge_pdfs, extract_pages_from_pdf
 from models.input import ResolvedInput
 from models.ledger import Unit
-from models.provenance import SourceSpan
+from models.provenance import SourceSpan, JobInputPayload
 from services.unitizer import unitize
 from errors import ErrorCode, SimplifyError
 
@@ -37,6 +38,37 @@ def upload_combined_pdf(pdf_bytes: bytes, user_id: str) -> str:
     bucket = get_gcs_bucket(bucket_name)
     blob = bucket.blob(blob_name)
     blob.upload_from_string(pdf_bytes, content_type="application/pdf")
+    return f"gs://{bucket_name}/{blob_name}"
+
+
+def upload_job_input(text: str, provenance: list[SourceSpan], user_id: str) -> str:
+    """Upload the (text, provenance) pair services.unitizer.unitize will
+    later need, as one JSON object, to GCS -- the transport this PRD (09)
+    chose over persisting either field on the Firestore job doc (PRD 02's
+    original design). Mirrors upload_combined_pdf's bucket/prefix/naming
+    convention exactly (same care_plan_inputs/{user_id}/inputs/ prefix,
+    same fresh-uuid object naming -- see PRD 09 §4.4 for why the path is
+    NOT derived from a job id), but writes a JSON payload instead of PDF
+    bytes, and unlike the merged PDF, this write is NOT optional -- see
+    PRD 09 §4.6 for why a failure here must propagate, not degrade.
+
+    Unlike validate_extracted_text_length (called on `text` by every caller
+    of this function before it's ever reached), this function does not
+    re-validate text storability -- the UTF-8-encode this function's JSON
+    serialization performs can still fail on a lone surrogate exactly as a
+    Firestore write could, but validate_text_storable has already ruled
+    that out upstream (PRD 09 §4.12's third bullet)."""
+    bucket_name = os.environ.get(Constants.Storage.GCS_BUCKET_ENV_VAR, "")
+    if not bucket_name:
+        raise RuntimeError("GCP_BUCKET_NAME is not configured")
+
+    object_id = str(uuid.uuid4())
+    blob_name = f"care_plan_inputs/{user_id}/inputs/{object_id}.json"
+
+    payload = JobInputPayload(text=text, provenance=provenance)
+    bucket = get_gcs_bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    blob.upload_from_string(json.dumps(payload.to_dict()), content_type="application/json")
     return f"gs://{bucket_name}/{blob_name}"
 
 
