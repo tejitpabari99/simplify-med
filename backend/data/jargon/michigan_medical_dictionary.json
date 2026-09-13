@@ -18,12 +18,6 @@
     "altText": null
   },
   {
-    "term": "ability",
-    "definition": "To able to or can do.",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
     "term": "ablation",
     "definition": "To remove or destroy a body part or tissue. This can be done in many ways, including surgery, radiation, or drugs.",
     "imgUrl": null,
@@ -871,7 +865,7 @@
   },
   {
     "term": "arrhythmia",
-    "definition": "A problem with the rate of your heart or when your heart doesn’t have a steady beat.",
+    "definition": "A problem with the rate of your heart or when your heart doesn\u2019t have a steady beat.",
     "imgUrl": null,
     "altText": null
   },
@@ -1105,7 +1099,7 @@
   },
   {
     "term": "bacteria",
-    "definition": "Very small living things, or “bugs,” that can be helpful (they help to digest food) or can cause illness (strep throat, for example).",
+    "definition": "Very small living things, or \u201cbugs,\u201d that can be helpful (they help to digest food) or can cause illness (strep throat, for example).",
     "imgUrl": null,
     "altText": null
   },
@@ -1236,12 +1230,6 @@
     "altText": null
   },
   {
-    "term": "blood",
-    "definition": "A fluid in your body that carries things that are needed for your body to work well, such as vitamins, minerals, and oxygen to cells. It also takes waste products away.",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
     "term": "blood clots",
     "definition": "Blood clots occur naturally when you are cut to stop the bleeding. They disappear when your body heals. But sometimes, blood clots do not dissolve or there are too many of them, and they can travel to distant body parts, such as your brain or heart.",
     "imgUrl": null,
@@ -1354,12 +1342,6 @@
     "definition": "When your heart beats slowly.",
     "imgUrl": null,
     "altText": null
-  },
-  {
-    "term": "brain",
-    "definition": "The organ that controls your thoughts, memory, speech, and movements. It also controls the functions of many organs.",
-    "imgUrl": "https://medicaldictionary.lib.umich.edu/images/Lobes_of_the_brain_NL.png",
-    "altText": "Side view of the brain with each lobes in a different color."
   },
   {
     "term": "breakthrough infection",
@@ -1597,7 +1579,7 @@
   },
   {
     "term": "case report",
-    "definition": "Details of one patient’s illness, including symptoms, diagnosis, treatment, and follow-up.",
+    "definition": "Details of one patient\u2019s illness, including symptoms, diagnosis, treatment, and follow-up.",
     "imgUrl": null,
     "altText": null
   },
@@ -2071,7 +2053,7 @@
   },
   {
     "term": "comply, compliance",
-    "definition": "Following a medical plan or doctor’s instructions. Also, following the law.",
+    "definition": "Following a medical plan or doctor\u2019s instructions. Also, following the law.",
     "imgUrl": null,
     "altText": null
   },
@@ -2366,12 +2348,6 @@
   {
     "term": "contribute",
     "definition": "To give or help.",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
-    "term": "control",
-    "definition": "To manage, or take care of.",
     "imgUrl": null,
     "altText": null
   },
@@ -3289,7 +3265,7 @@
   },
   {
     "term": "double blind study",
-    "definition": "A study where the researchers and the patients don’t know who gets what drug.",
+    "definition": "A study where the researchers and the patients don\u2019t know who gets what drug.",
     "imgUrl": null,
     "altText": null
   },
@@ -4122,12 +4098,6 @@
     "altText": null
   },
   {
-    "term": "fatigue",
-    "definition": "tired, weak feeling of the whole body, feeling tired all over",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
     "term": "fatty liver disease",
     "definition": "Occurs when fat builds up in your liver. There are two main types: nonalcoholic fatty liver disease (NAFLD) and alcoholic fatty liver disease (or alcoholic steatohepatitis).",
     "imgUrl": null,
@@ -4166,12 +4136,6 @@
   {
     "term": "fetus",
     "definition": "An unborn baby, from 12 weeks of age to birth.",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
-    "term": "fever",
-    "definition": "A body temperature that is higher than normal. Also called pyrexia.",
     "imgUrl": null,
     "altText": null
   },
@@ -4717,7 +4681,7 @@
   },
   {
     "term": "health care setting",
-    "definition": "Any place that you rget medical treatment, like a doctor ’s office, hospital, clinic, or laboratory.",
+    "definition": "Any place that you rget medical treatment, like a doctor \u2019s office, hospital, clinic, or laboratory.",
     "imgUrl": null,
     "altText": null
   },
@@ -4750,12 +4714,6 @@
     "definition": "When you have trouble hearing sounds or can't hear any sounds at all. Also called presbycusis or hearing disorders.",
     "imgUrl": null,
     "altText": null
-  },
-  {
-    "term": "heart",
-    "definition": "An organ made of muscles that pumps blood through your body. It is on the left side of your body.",
-    "imgUrl": "https://medicaldictionary.lib.umich.edu/images/Gray490blanco.png",
-    "altText": "The heart can be seen between the right and left lungs.Some structures are shown in red or blue."
   },
   {
     "term": "heart attack",
@@ -5191,7 +5149,7 @@
   },
   {
     "term": "immune system",
-    "definition": "The body’s natural defense against sickness.",
+    "definition": "The body\u2019s natural defense against sickness.",
     "imgUrl": null,
     "altText": null
   },
@@ -5287,7 +5245,7 @@
   },
   {
     "term": "impotence, impotent",
-    "definition": "When a man either can’t get or can’t keep an erection.",
+    "definition": "When a man either can\u2019t get or can\u2019t keep an erection.",
     "imgUrl": null,
     "altText": null
   },
@@ -5485,7 +5443,7 @@
   },
   {
     "term": "ineffectual",
-    "definition": "Something that doesn’t work.",
+    "definition": "Something that doesn\u2019t work.",
     "imgUrl": null,
     "altText": null
   },
@@ -5569,7 +5527,7 @@
   },
   {
     "term": "inflammatory bowel disease",
-    "definition": "A group of chronic illnesses where your intestines are very painful and swollen. The two most common kinds are ulcerative colitis and Crohn’s disease.",
+    "definition": "A group of chronic illnesses where your intestines are very painful and swollen. The two most common kinds are ulcerative colitis and Crohn\u2019s disease.",
     "imgUrl": null,
     "altText": null
   },
@@ -6583,7 +6541,7 @@
   },
   {
     "term": "medical facilities",
-    "definition": "Any place where medical treatmet is provided, such as your doctor’s office, hospitals, clinics, nursing homes, and labs for patient test and procedures.",
+    "definition": "Any place where medical treatmet is provided, such as your doctor\u2019s office, hospitals, clinics, nursing homes, and labs for patient test and procedures.",
     "imgUrl": null,
     "altText": null
   },
@@ -6596,12 +6554,6 @@
   {
     "term": "medication",
     "definition": "A drug or medicine.",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
-    "term": "medicine",
-    "definition": "A drug.",
     "imgUrl": null,
     "altText": null
   },
@@ -6727,7 +6679,7 @@
   },
   {
     "term": "microcephaly",
-    "definition": "A birth defect where the baby’s head is smaller in comparison to babies of the same sex and age. These babies often have smaller brains that might not have developed properly.",
+    "definition": "A birth defect where the baby\u2019s head is smaller in comparison to babies of the same sex and age. These babies often have smaller brains that might not have developed properly.",
     "imgUrl": null,
     "altText": null
   },
@@ -6967,7 +6919,7 @@
   },
   {
     "term": "myopia",
-    "definition": "When it’s hard to see things that are far away. Also called nearsightedness.",
+    "definition": "When it\u2019s hard to see things that are far away. Also called nearsightedness.",
     "imgUrl": null,
     "altText": null
   },
@@ -6991,7 +6943,7 @@
   },
   {
     "term": "nearsightedness",
-    "definition": "When it’s hard to see things that are far away. Also called myopia.",
+    "definition": "When it\u2019s hard to see things that are far away. Also called myopia.",
     "imgUrl": null,
     "altText": null
   },
@@ -7069,19 +7021,19 @@
   },
   {
     "term": "nephrosis",
-    "definition": "Symptoms that indicate kidney damage, resulting from a problem with the kidneys’ filters (called glomeruli). It is caused by a variety of diseases, most commonly diabetes and lupus. Also called nephrotic syndrome.",
+    "definition": "Symptoms that indicate kidney damage, resulting from a problem with the kidneys\u2019 filters (called glomeruli). It is caused by a variety of diseases, most commonly diabetes and lupus. Also called nephrotic syndrome.",
     "imgUrl": null,
     "altText": null
   },
   {
     "term": "nephrotic syndrome",
-    "definition": "Symptoms that indicate kidney damage, resulting from a problem with the kidneys’ filters (called glomeruli). It is caused by a variety of diseases, most commonly diabetes and lupus. Also called nephrosis.",
+    "definition": "Symptoms that indicate kidney damage, resulting from a problem with the kidneys\u2019 filters (called glomeruli). It is caused by a variety of diseases, most commonly diabetes and lupus. Also called nephrosis.",
     "imgUrl": null,
     "altText": null
   },
   {
     "term": "nervous system",
-    "definition": "A person’s brain, spinal cord, and nerves. Your nervous system controls your thinking, feeling, smelling, touching, seeing, hearing, and moving.",
+    "definition": "A person\u2019s brain, spinal cord, and nerves. Your nervous system controls your thinking, feeling, smelling, touching, seeing, hearing, and moving.",
     "imgUrl": null,
     "altText": null
   },
@@ -7634,12 +7586,6 @@
   {
     "term": "overweight",
     "definition": "When you weigh too much for how tall you are.",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
-    "term": "pain",
-    "definition": "An unplesant feeling, a sign from your nerves that something may be wrong. It ca be sharp or dull, sting, burn, or ache.",
     "imgUrl": null,
     "altText": null
   },
@@ -8257,7 +8203,7 @@
   },
   {
     "term": "placebo",
-    "definition": "A pill that doesn’t have any drugs or medicine used in research to help show that a medication works. Also called “sugar” pill.",
+    "definition": "A pill that doesn\u2019t have any drugs or medicine used in research to help show that a medication works. Also called \u201csugar\u201d pill.",
     "imgUrl": null,
     "altText": null
   },
@@ -8269,7 +8215,7 @@
   },
   {
     "term": "placenta",
-    "definition": "The part of the mother’s womb that supplies oxygen and nutrition to her unborn baby.",
+    "definition": "The part of the mother\u2019s womb that supplies oxygen and nutrition to her unborn baby.",
     "imgUrl": null,
     "altText": null
   },
@@ -8497,7 +8443,7 @@
   },
   {
     "term": "preclinical",
-    "definition": "A disease that isn’t causing symptoms yet.",
+    "definition": "A disease that isn\u2019t causing symptoms yet.",
     "imgUrl": null,
     "altText": null
   },
@@ -9678,12 +9624,6 @@
     "altText": null
   },
   {
-    "term": "risk",
-    "definition": "The chance that you will develop a specific health problem.",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
     "term": "risk assessment",
     "definition": "A way to find out a chance of a person or group having a health problem.",
     "imgUrl": null,
@@ -10267,7 +10207,7 @@
   },
   {
     "term": "steroid",
-    "definition": "A kind of drug that reduces swelling and helps your body’s natural defense against sickness (your immune system). Also called corticosteroids or glucocorticoids.",
+    "definition": "A kind of drug that reduces swelling and helps your body\u2019s natural defense against sickness (your immune system). Also called corticosteroids or glucocorticoids.",
     "imgUrl": null,
     "altText": null
   },
@@ -10288,12 +10228,6 @@
     "definition": "To make something more active.",
     "imgUrl": null,
     "altText": null
-  },
-  {
-    "term": "stomach",
-    "definition": "The place in your upper belly where food is first broken down (digested). It is between the tube that takes food from your mouth to your stomach (esophagus) and your small intestine.",
-    "imgUrl": "https://medicaldictionary.lib.umich.edu/images/201405_stomach.png",
-    "altText": "Stomach, colored pink, with openings of the tube that carries food from the mouth to the stomach (esophagus, top) and small intestine (bottom)"
   },
   {
     "term": "stomach ulcers",
@@ -10554,12 +10488,6 @@
     "altText": null
   },
   {
-    "term": "symptom",
-    "definition": "A sign of disease or sickness.",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
     "term": "symptomatic",
     "definition": "When you have symptoms, such as pain or fever, of a disease.",
     "imgUrl": null,
@@ -10676,7 +10604,7 @@
   {
     "term": "teeth, tooth",
     "definition": "The 32 bone-like objects in our jaw.",
-    "imgUrl": "https://medicaldictionary.lib.umich.edu/images/Bleibende_Zähne_beim_Menschen_eingefärbt.png",
+    "imgUrl": "https://medicaldictionary.lib.umich.edu/images/Bleibende_Z\u00e4hne_beim_Menschen_eingef\u00e4rbt.png",
     "altText": "The 8 permanent teeth on the bottom right side of the jaw, all labeled with words and colors for the different kinds of teeth"
   },
   {
@@ -11030,12 +10958,6 @@
   {
     "term": "treat",
     "definition": "To give care or take care of.",
-    "imgUrl": null,
-    "altText": null
-  },
-  {
-    "term": "treatment",
-    "definition": "Any action, medicine, or other therapy to treat or cure a disease.",
     "imgUrl": null,
     "altText": null
   },
