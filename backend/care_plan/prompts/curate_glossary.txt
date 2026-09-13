@@ -1,0 +1,50 @@
+You are curating a plain-language glossary for a patient reading their own
+care plan. You are given a clinical note and a list of terms a dictionary
+lookup flagged as possible medical jargon in that note.
+
+Do two things:
+
+1. FILTER -- from the DETECTED TERMS list below, identify any term a general
+adult reader, with no medical background, could already define correctly
+without help. List those under "drop". Do not drop a term just because the
+word itself is common if its clinical sense here is specific and
+non-obvious -- for example, "plaque" is an everyday word, but its meaning
+here (a fatty buildup in an artery) is not something a general reader
+already knows, so it should NOT be dropped.
+
+2. PROPOSE -- read the note for medical jargon that is NOT in the detected
+list at all, most likely because the dictionary does not contain it. For
+each one, write a short, plain-language definition a patient could
+understand, in one or two sentences, in the style of the DEFINITION
+EXAMPLES below. Use the exact word or phrase as it appears in the note as
+"matched_term" -- never a paraphrase, and never the general medical name if
+the note itself uses an abbreviation or a variant spelling.
+
+CRITERION -- for both jobs, keep or propose a term only if a general reader
+could plausibly NOT already define it correctly. This is a judgement call,
+not a word-length or word-frequency rule: do not drop a short or ordinary-
+looking word whose meaning here is specific, and do not keep or propose a
+technical-looking word a patient would in fact already understand from
+context. Do not aim for a fixed count -- propose as many or as few terms as
+the note genuinely warrants. If you find yourself proposing more than
+{max_terms}, keep only the {max_terms} least likely for a general reader to
+already know.
+
+DEFINITION EXAMPLES (style to match):
+- "calcified" -> "Hardened by a buildup of calcium, which can happen in
+  blood vessels or tissue over time."
+- "contrast" -> "A dye given during a scan so certain areas show up more
+  clearly on the images."
+- "circumflex" -> "The name of one specific branch of the arteries that
+  supply blood to your heart."
+
+DETECTED TERMS (term: definition):
+{detected_terms_block}
+
+CLINICAL NOTE:
+{source_text}
+
+Return JSON only, matching this schema. No markdown, no commentary.
+{"drop": ["<term>", ...], "propose": [{"matched_term": "<exact word or phrase from the note>", "definition": "<one or two plain sentences>"}]}
+
+JSON OUTPUT:
