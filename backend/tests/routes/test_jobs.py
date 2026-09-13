@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timezone
 from io import BytesIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
 
 import pytest
 from flask import Flask
@@ -141,6 +141,8 @@ def test_post_text_job_uploads_payload_and_stores_uri(
     ]
     payload = mock_create_doc.call_args.kwargs["payload"]
     assert payload["input_payload_gcs_uri"].startswith("gs://test-bucket/care_plan_inputs/")
+    retired_fields = {"input_" + "text", "input_" + "provenance"}
+    assert not retired_fields & payload.keys()
 
 
 @patch.dict("os.environ", JOBS_ENV)
@@ -302,14 +304,22 @@ def _mock_doc(exists, data=None):
 @patch("routes.jobs.delete_gcs_object")
 @patch("routes.jobs.firestore_client")
 def test_delete_owned_job_returns_204_and_deletes_gcs(mock_fs, mock_delete_gcs, client_jobs, auth_ok):
-    doc = _mock_doc(True, {"uid": "user-1", "input_pdf_gcs_uri": "gs://b/p.pdf"})
+    doc = _mock_doc(True, {
+        "uid": "user-1",
+        "input_pdf_gcs_uri": "gs://b/p.pdf",
+        "input_payload_gcs_uri": "gs://b/payload.json",
+    })
     ref = MagicMock()
     ref.get.return_value = doc
     mock_fs.return_value.collection.return_value.document.return_value = ref
 
     resp = client_jobs.delete("/jobs/job-1", headers=auth_ok)
     assert resp.status_code == 204
-    mock_delete_gcs.assert_called_once_with("gs://b/p.pdf")
+    mock_delete_gcs.assert_has_calls([
+        call("gs://b/p.pdf"),
+        call("gs://b/payload.json"),
+    ])
+    assert mock_delete_gcs.call_count == 2
     ref.delete.assert_called_once()
 
 

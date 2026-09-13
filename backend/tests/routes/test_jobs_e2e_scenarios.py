@@ -1020,11 +1020,15 @@ class TestScenario8LifecycleRaces:
         grading = _build_grading()
         fake_pipeline = _fake_pipeline_factory(care_plan, grading)
 
-        with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
-            worker_resp = _run_worker(client_worker, job_id)
+        with patch("routes.worker.delete_gcs_object") as mock_delete_gcs:
+            with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+                worker_resp = _run_worker(client_worker, job_id)
 
         assert worker_resp.status_code == 200
         assert fake_pipeline.calls["count"] == 0  # never invoked -- pure no-op
+        # This delivery does not own execution, so it must leave the active
+        # attempt's input objects intact for that attempt to consume.
+        mock_delete_gcs.assert_not_called()
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
         assert doc["status"] == "processing"  # untouched
 

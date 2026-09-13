@@ -60,7 +60,7 @@ describe('formatBytes', () => {
 });
 
 describe('validateText', () => {
-  it('accepts plain ASCII text comfortably under both the character and byte caps', () => {
+  it('accepts plain ASCII text comfortably under the character cap', () => {
     expect(validateText('a'.repeat(300_000))).toBeNull();
   });
 

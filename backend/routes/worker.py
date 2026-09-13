@@ -70,6 +70,7 @@ def execute_job(job_id: str):
         scope.add("job_id", job_id)
 
         job: JobDoc | None = None
+        owns_execution = False
 
         try:
             job_doc = get_job_doc(job_id)
@@ -120,6 +121,10 @@ def execute_job(job_id: str):
 
             from utils.firebase import firestore_client
             now = datetime.now(timezone.utc)
+            # Only a delivery that has passed the terminal/fresh-lease guards
+            # owns this execution and its input-object cleanup. A fresh
+            # redelivery must leave those objects for the active attempt.
+            owns_execution = True
             firestore_client().collection("care_plan_outputs").document(job_id).update({
                 "status": "processing",
                 "started_at": now,
@@ -257,7 +262,7 @@ def execute_job(job_id: str):
                 pass
             return "", 500
         finally:
-            if job is not None:
+            if owns_execution and job is not None:
                 if job.input_pdf_gcs_uri:
                     delete_gcs_object(job.input_pdf_gcs_uri)
                 if job.input_payload_gcs_uri:
