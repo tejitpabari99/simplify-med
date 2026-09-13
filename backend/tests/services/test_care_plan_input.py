@@ -250,33 +250,12 @@ def test_resolve_uploaded_files_image_becomes_raw_merge_candidate(mock_extract_i
 # ---------------------------------------------------------------------------
 
 def test_validate_extracted_text_length_accepts_text_at_char_limit():
-    """ASCII text at the byte-cap boundary (MAX_TEXT_BYTES, the binding
-    constraint for 1-byte-per-char text) must still be accepted -- proves the
-    new byte cap doesn't shrink the previously-allowed ASCII length."""
-    text = "a" * Constants.Uploads.MAX_TEXT_BYTES
+    text = "a" * Constants.Uploads.MAX_TEXT_LENGTH
     validate_extracted_text_length(text)  # must not raise
 
 
 def test_validate_extracted_text_length_rejects_text_over_char_limit():
     text = "a" * (Constants.Uploads.MAX_TEXT_LENGTH + 1)
-    with pytest.raises(ValueError, match="too long"):
-        validate_extracted_text_length(text)
-
-
-def test_validate_extracted_text_length_rejects_text_over_byte_limit():
-    text = "a" * (Constants.Uploads.MAX_TEXT_BYTES + 1)
-    with pytest.raises(ValueError, match="too long"):
-        validate_extracted_text_length(text)
-
-
-def test_validate_extracted_text_length_rejects_cjk_text_under_char_cap_but_over_byte_cap():
-    """Regression for edge-case review Finding 1: CJK text well under the
-    500,000-character cap (so the old char-only check would have passed it)
-    is 3 bytes/char in UTF-8, so it can exceed MAX_TEXT_BYTES while staying
-    far under MAX_TEXT_LENGTH -- and must now be rejected by the byte check."""
-    char_count = (Constants.Uploads.MAX_TEXT_BYTES // 3) + 100
-    assert char_count < Constants.Uploads.MAX_TEXT_LENGTH
-    text = "中" * char_count  # CJK character, 3 bytes each in UTF-8
     with pytest.raises(ValueError, match="too long"):
         validate_extracted_text_length(text)
 
@@ -299,7 +278,7 @@ def test_resolve_uploaded_files_rejects_extracted_text_over_limit():
     at all (unlike the pasted-text path), so an over-limit document would run
     every pipeline step before failing late with a misleading MAX_TOKENS
     error. It must now be rejected up front, before any job is created."""
-    oversized_text = "a" * (Constants.Uploads.MAX_TEXT_BYTES + 1)
+    oversized_text = "a" * (Constants.Uploads.MAX_TEXT_LENGTH + 1)
     fake_upload = _FakeUpload("notes.txt", oversized_text.encode("utf-8"))
 
     with pytest.raises(ValueError, match="too long"):

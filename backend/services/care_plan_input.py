@@ -123,23 +123,11 @@ def validate_extracted_text_length(text: str) -> None:
     """Raise ValueError if extracted or pasted document text is unsafe to
     store, or exceeds the configured maximum length.
 
-    Applied to the pasted-text path in routes/jobs.py::_resolve_job_input,
-    as well as to text extracted from an upload. Callers must invoke this
-    before enqueueing a job, so an over-limit or unstorable document is
-    rejected at submission time with a clear, accurate reason instead of
-    failing deep into the pipeline (e.g. via ErrorCode.LLM_MAX_TOKENS, an
-    unrelated output-token-cap error) or with an uncaught Firestore write
-    failure.
-
-    Two independent length checks, both must pass:
-    - MAX_TEXT_LENGTH: a Python character (codepoint) count. The original
-      check; kept as-is so ASCII-only input's allowed length is unchanged.
-    - MAX_TEXT_BYTES: a UTF-8-encoded byte count. Added because Firestore's
-      1,048,576-byte (1 MiB) per-document hard limit is a *byte* limit, and
-      the char count alone doesn't bound it for non-ASCII text -- 500,000
-      chars of CJK/emoji is 1.5-2 MB in UTF-8, well past the char check
-      failing to catch it (see Constants.Uploads.MAX_TEXT_BYTES for the full
-      accounting, and edge-case review Finding 1).
+    One length check: MAX_TEXT_LENGTH, a Python character (codepoint) count.
+    PRD 09 removed the sibling UTF-8-byte check -- it existed only to keep
+    this text under Firestore's 1 MiB document limit, and this text no longer
+    goes to Firestore at all (see Constants.Uploads.MAX_TEXT_LENGTH's comment
+    for the full accounting of why no substitute byte cap was needed).
     """
     validate_text_storable(text, field="Extracted document text")
 
@@ -150,15 +138,6 @@ def validate_extracted_text_length(text: str) -> None:
             f"({char_length:,} characters; limit is {Constants.Uploads.MAX_TEXT_LENGTH:,} characters). "
             "Try uploading a shorter document or splitting it into smaller sections."
         )
-
-    byte_length = len(text.encode("utf-8"))
-    if byte_length > Constants.Uploads.MAX_TEXT_BYTES:
-        raise ValueError(
-            f"Extracted document text is too long to process "
-            f"({byte_length:,} bytes when encoded; limit is {Constants.Uploads.MAX_TEXT_BYTES:,} bytes). "
-            "Try uploading a shorter document or splitting it into smaller sections."
-        )
-
 
 def extract_pages_from_bytes(file_bytes: bytes, filename: str) -> list[tuple[int, str]]:
     """Extract text from file bytes, segmented into (page_number, page_text)

@@ -31,21 +31,20 @@ class Constants:
         # enqueued. Not a practical limit on real clinical documents (even a
         # long chart is well under 100K chars) -- exists only to fail fast on
         # a pathological input, with enormous headroom below the model's
-        # input context. The output ceiling is Llm.MAX_TOKENS_LONG_FORM, not this.
+        # input context. The output ceiling is Llm.MAX_TOKENS_LONG_FORM, not
+        # this.
+        #
+        # This is now the ONLY input-length cap. PRD 09 removed the sibling
+        # byte cap that existed purely to keep this text under Firestore's
+        # 1,048,576-byte document limit; input text no longer touches
+        # Firestore at all (it moves to a GCS object -- see
+        # services.care_plan_input.upload_job_input/load_job_input), so that
+        # limit no longer applies. No substitute byte cap is needed: GCS has
+        # no comparable size ceiling at these scales, and this char cap alone
+        # bounds worst-case UTF-8 size to 4 * MAX_TEXT_LENGTH bytes (~2 MB),
+        # a non-issue for a GCS write/read or this pipeline's existing LLM
+        # token budgets.
         MAX_TEXT_LENGTH: int = 500_000
-
-        # UTF-8-encoded BYTE budget, enforced alongside MAX_TEXT_LENGTH (char
-        # count alone doesn't bound bytes for non-ASCII text). HAZARD: sized
-        # to keep the full care_plan_outputs Firestore doc under the 1,048,576
-        # byte (1 MiB) hard document limit -- Firestore measures size in
-        # UTF-8 bytes, not codepoints, so e.g. 500K CJK chars is ~1.5 MB.
-        # Exceeding this previously caused an uncaught Firestore write
-        # failure (500) instead of a clean 400 (edge-case review Finding 1).
-        # 350,000 B leaves a large safety margin below the ~896,576 B
-        # actually available for input_text once job metadata and the
-        # trimmed output_data reserve are accounted for -- do not raise this
-        # without re-deriving that budget.
-        MAX_TEXT_BYTES: int = 350_000
 
         # Minimum stripped-text length (chars) for a file/document to count
         # as real content rather than noise. Applied in
