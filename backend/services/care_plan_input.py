@@ -159,12 +159,22 @@ def extract_pages_from_bytes(file_bytes: bytes, filename: str) -> list[tuple[int
         try:
             return extract_pages_from_pdf(file_bytes)
         except PyPDF2.errors.FileNotDecryptedError as exc:
+            # Verified against the actual installed PyPDF2 3.0.1: a genuinely
+            # password-protected PDF raises this specific subclass. None of
+            # PyPDF2's exceptions are ValueError/FileNotFoundError/SimplifyError,
+            # so uncaught they fall through to a generic 500 (edge-case review
+            # Finding 6). Distinguish the "encrypted" case from "corrupt" so
+            # the user gets an actionable, specific message.
             raise SimplifyError(
                 ErrorCode.FILE_PARSE_FAILED,
                 detail=f"{filename} appears to be password-protected. Please upload an unencrypted PDF.",
                 original=exc,
             ) from exc
         except PyPDF2.errors.PyPdfError as exc:
+            # Base class of every other PyPDF2 read failure (EmptyFileError
+            # for a zero-byte file, PdfReadError for garbage bytes / a
+            # mislabeled non-PDF extension, PdfStreamError, etc.) -- all
+            # verified to raise from this call for the corresponding inputs.
             raise SimplifyError(
                 ErrorCode.FILE_PARSE_FAILED,
                 detail=f"{filename} could not be read -- it may be corrupted, empty, "
@@ -186,6 +196,13 @@ def extract_pages_from_bytes(file_bytes: bytes, filename: str) -> list[tuple[int
         except RuntimeError:
             raise
         except Exception as exc:
+            # python-docx raises whatever the underlying zip/XML parser raises
+            # for a corrupt or non-DOCX file (zipfile.BadZipFile, KeyError for
+            # a missing part, docx.opc.exceptions.PackageNotFoundError, etc.) --
+            # none of these are SimplifyError/ValueError, so uncaught they fall
+            # through to a generic 500 (see edge-case review Finding 6, which
+            # verified the equivalent PyPDF2 gap; python-docx is the same
+            # class of bug). Reclassify as a clean, actionable FILE_PARSE_FAILED.
             raise SimplifyError(
                 ErrorCode.FILE_PARSE_FAILED,
                 detail=f"{filename} could not be read as a DOCX file -- it may be "
@@ -198,6 +215,9 @@ def extract_pages_from_bytes(file_bytes: bytes, filename: str) -> list[tuple[int
         try:
             text = extract_text_from_html(file_bytes)
         except Exception as exc:
+            # BeautifulSoup's stdlib html.parser backend is extremely lenient
+            # and rarely raises, but guard the boundary anyway for defense in
+            # depth/symmetry with the other extractors (Finding 6).
             raise SimplifyError(
                 ErrorCode.FILE_PARSE_FAILED,
                 detail=f"{filename} could not be read as an HTML file ({type(exc).__name__}).",
@@ -259,12 +279,20 @@ def resolve_uploaded_files(
     merge_candidates: list[tuple[bytes, str]] = []
     filenames: list[str] = []
     skipped_files: list[str] = []
+    # Parallel to skipped_files: the actual exception raised for each
+    # skipped file, so a single-file request that fails can re-raise its
+    # own specific, already-classified error (see the `not filenames` check
+    # below) instead of always collapsing to a generic EMPTY_DOCUMENT.
     skipped_errors: list[Exception] = []
     aggregate_bytes = 0
 
     for upload in files:
         filename = upload.filename
 
+        # Extension check happens before reading bytes so an unsupported
+        # file never counts toward the byte/aggregate limits below -- still
+        # tolerable (skippable) under tolerate_unusable_files, same as an
+        # extraction failure.
         if not is_allowed_extension(filename):
             exc = ValueError("File must be PDF, TXT, DOCX, HTML, or an image (PNG/JPG/WEBP/HEIC)")
             if tolerate_unusable_files:
@@ -275,6 +303,9 @@ def resolve_uploaded_files(
             raise exc
 
         file_bytes = upload.read()
+        # Request-level hard stop: never tolerated, regardless of
+        # tolerate_unusable_files -- skipping a file doesn't "give back" the
+        # bytes it already consumed against the request's own size budget.
         aggregate_bytes += len(file_bytes)
         if aggregate_bytes > max_aggregate_bytes:
             limit_mb = max_aggregate_bytes / (1024 * 1024)
@@ -287,6 +318,11 @@ def resolve_uploaded_files(
             extracted_text = "\n\n".join(t for _, t in pages)
             real_content = extracted_text.strip()
             if len(real_content) < Constants.Uploads.MIN_MEANINGFUL_CONTENT_CHARS:
+                # Mirrors the image-OCR EMPTY_DOCUMENT path for every other
+                # format: a scanned/no-text-layer PDF, a blank docx/txt/html,
+                # etc. must not silently produce a near-empty document that
+                # sails past every downstream check (edge-case review
+                # Finding 2).
                 raise SimplifyError(
                     ErrorCode.EMPTY_DOCUMENT,
                     detail=f"{filename} produced no meaningful extractable text (likely a "
@@ -321,7 +357,16 @@ def resolve_uploaded_files(
             )
 
     if not filenames:
+        # Only reachable under tolerate_unusable_files (otherwise the loop
+        # above would already have raised on the first unusable file) --
+        # every uploaded file was individually unusable.
         if len(files) == 1 and skipped_errors:
+            # A single-file request isn't really a "batch" -- collapsing its
+            # one already-classified failure into the generic "none of
+            # several files worked" EMPTY_DOCUMENT message would discard
+            # actionable detail (e.g. a password-protected PDF would
+            # misleadingly surface as "not a scanned image"). Re-raise the
+            # original error instead (Finding 5/6).
             raise skipped_errors[0]
         raise SimplifyError(
             ErrorCode.EMPTY_DOCUMENT,
@@ -329,6 +374,10 @@ def resolve_uploaded_files(
         )
 
     combined_text = "\n".join(text_parts)
+    # Fail fast: reject an over-limit document up front (before the (possibly
+    # slow) PDF merge below, before any job is enqueued, and before any
+    # pipeline/LLM step runs) rather than letting it run every pipeline step
+    # only to fail late on an unrelated output-token-cap error.
     validate_extracted_text_length(combined_text)
 
     combined_pdf_bytes = None
