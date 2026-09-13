@@ -9,7 +9,6 @@ from pydantic import ConfigDict, Field
 from .base import JsonModel
 from .api_response import ErrorDetail, StatusEnum
 from .care_plan.envelope import CarePlanInternal
-from .provenance import SourceSpan
 from utils.constants import Constants
 
 SourceKind = Constants.Uploads.SourceKind
@@ -45,11 +44,14 @@ class JobDoc(JsonModel):
     error_data: Optional[ErrorDetail] = None
 
     # ── Input provenance ──────────────────────────────────────────────────
+    # input_text and input_provenance no longer live here -- both moved to a
+    # GCS object referenced by input_payload_gcs_uri (PRD 09). Firestore
+    # holds only what the frontend renders or what routing/cleanup needs;
+    # the raw input text and its provenance map are neither.
     input_source_kind: SourceKind
-    input_text: Optional[str] = None
     input_source_filename: str
     input_pdf_gcs_uri: Optional[str] = None
-    input_provenance: list[SourceSpan] = Field(default_factory=list)   # NEW
+    input_payload_gcs_uri: Optional[str] = None
     input_version: str = "v1-2"
     grading_enabled: bool = False
 
@@ -82,8 +84,8 @@ class JobDoc(JsonModel):
         """Build a job doc for a care-plan job.
 
         input_fields dict must contain:
-          input_source_kind, input_text, input_source_filename,
-          input_pdf_gcs_uri, input_provenance, input_version, grading_enabled
+          input_source_kind, input_payload_gcs_uri, input_source_filename,
+          input_pdf_gcs_uri, input_version, grading_enabled
         """
         return cls(
             uid=user_id,
