@@ -599,7 +599,10 @@ class TestScenario3MixedBatchLimits:
         img2 = _make_jpeg_bytes((250, 250, 250)) + pad
         txt_bytes = b"Plain text clinical note content for the visit summary."
 
-        with patch("services.care_plan_input.extract_text_from_pdf", return_value="PDF page content about the visit."):
+        with patch(
+            "services.care_plan_input.extract_pages_from_pdf",
+            return_value=[(1, "PDF page content about the visit.")],
+        ):
             data = {"files": [
                 (io.BytesIO(pdf_buf.getvalue()), "note.pdf"),
                 (io.BytesIO(docx_bytes), "note.docx"),
@@ -920,11 +923,18 @@ class TestScenario7FilenameHostility:
         )
 
         # No crash, and the hostile string is contained as plain string DATA
-        # (inside the combined text via source_separator) -- never used as a
-        # dict/mapping KEY, which is the only place it could plausibly cause
-        # structural corruption in a Firestore document or JSON body.
-        assert filename in resolved.text
+        # -- carried structurally on resolved.source_filename and on each
+        # SourceSpan.file in resolved.provenance (PRD 02 §4.6: there is no
+        # more `--- Source: ... ---` marker written into the combined text)
+        # -- never used as a dict/mapping KEY, which is the only place it
+        # could plausibly cause structural corruption in a Firestore
+        # document or JSON body.
         assert resolved.source_filename == filename
+        assert len(resolved.provenance) >= 1
+        assert all(span.file == filename for span in resolved.provenance)
+        # And it must NOT leak into the plain-text field itself, since file
+        # identity no longer lives in text at all.
+        assert filename not in resolved.text
 
 
 # ===========================================================================
