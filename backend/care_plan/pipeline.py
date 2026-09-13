@@ -87,6 +87,182 @@ _GROUNDING_SCHEMA = json.dumps(
     indent=2,
 )
 
+
+def _format_units_for_prompt(units: list[Unit]) -> str:
+    """Render the unit list as the grounding prompt's numbered source text.
+    Consecutive units sharing the same (file, page) are grouped under one
+    header for readability -- the model still cites only the bracketed
+    integer id; file/page headers are context, never a citable handle
+    (brief brainstorm.v1.md §3.2: file/page are recovered by lookup, not
+    asked of the model)."""
+    lines: list[str] = []
+    current_key = None
+    for unit in units:
+        key = (unit.file, unit.page)
+        if key != current_key:
+            lines.append(f"=== {unit.file}, page {unit.page} ===")
+            current_key = key
+        lines.append(f"[{unit.id}] {unit.text}")
+    return "\n".join(lines)
+
+
+def _is_verbatim_quote(quote: str, unit_text: str) -> bool:
+    """Deterministic check (D1): is `quote` a substring of `unit_text`,
+    tolerant of whitespace/case/accent noise from OCR (PRD 03 §4.5)? Reuses
+    utils.text_normalization.normalize_text (already used for term-detection
+    matching) rather than inventing a second normalization scheme. A blank
+    or whitespace-only quote never counts as a match -- "" is trivially a
+    substring of everything in Python, but carries no evidence."""
+    if not quote.strip():
+        return False
+    return normalize_text(quote) in normalize_text(unit_text)
+
+
+# Quote informativeness floor (D2, PRD 03 §9 -- resolves the prior [OPEN]
+# item). Named constants, not bare literals, so the thresholds are tunable
+# without hunting through the check's body -- matching this module's own
+# precedent of naming its tunable numbers (Constants.Llm.MAX_TOKENS_LONG_FORM,
+# Constants.Llm.TEMPERATURE_JSON) rather than inlining them.
+_QUOTE_MIN_LENGTH = 12
+_QUOTE_LONG_WORD_MIN_LENGTH = 7
+
+
+def _is_informative_quote(quote: str) -> bool:
+    """Deterministic check (D2): does `quote` carry enough clinical content
+    to be worth citing, independent of whether it's verbatim? A quote
+    passes if ANY of the following holds: it contains a digit (a dose, a
+    lab value, a date); it contains a word of
+    _QUOTE_LONG_WORD_MIN_LENGTH-plus characters (long words carry clinical
+    content -- "metoprolol", "discontinued"); or it is
+    _QUOTE_MIN_LENGTH-plus characters long outright. A bare character-count
+    floor alone would reject legitimately short evidence ("40 mg",
+    "warfarin") -- neither has 12 characters, but both are exactly the
+    kind of short, information-dense fragment grounding is supposed to
+    cite. Digits and long words are what carry clinical content in short
+    fragments; the length floor exists only to catch a short quote that has
+    neither (e.g. a single common short word)."""
+    if any(ch.isdigit() for ch in quote):
+        return True
+    if any(len(word) >= _QUOTE_LONG_WORD_MIN_LENGTH for word in quote.split()):
+        return True
+    return len(quote) >= _QUOTE_MIN_LENGTH
+
+
+def _locate_quote_offsets(quote: str, unit_text: str) -> tuple[int, int]:
+    """Deterministically recover (char_start, char_end) -- Python slice
+    offsets into `unit_text` -- for a `quote` already proven verbatim by
+    `_is_verbatim_quote`. Must not be called on a (quote, unit_text) pair
+    that hasn't already passed that check (see the AssertionError below).
+
+    A naive `unit_text.find(quote)` is NOT sufficient: `_is_verbatim_quote`
+    compares NORMALIZED strings (whitespace-collapsed, lowercased,
+    accent-stripped -- utils.text_normalization.normalize_text), so a quote
+    that legitimately passed that check can differ from `unit_text` in
+    exactly those ways (OCR-doubled spaces collapsing to one, a case
+    difference) and a raw, un-normalized `.find()` can come back -1 on a
+    quote this function is guaranteed to be called with.
+
+    Algorithm: normalize `unit_text` with
+    `utils.text_normalization.normalize_with_offsets` (§4.2 imports; new
+    function, see below), which returns the normalized string paired with
+    a same-length list of raw-text (start, end) spans, one span per
+    normalized character -- i.e. `spans[i]` is the `unit_text` slice that
+    produced `normalized[i]`. Find the FIRST occurrence of
+    `normalize_text(quote)` in that normalized string (`str.find`).
+    `char_start` is `spans[match_start][0]`; `char_end` is
+    `spans[match_start + len(normalized_quote) - 1][1]`.
+
+    Edge cases (PRD 03 task's explicit callouts):
+    - **Multiple occurrences of the same quote in one unit**: `str.find`
+      returns the first. There is no principled way to prefer a later
+      occurrence of literally the same normalized text -- both are equally
+      valid evidence -- so "first" is simplest, deterministic, and stable
+      across runs.
+    - **Quote spanning normalized whitespace** (e.g. the raw text has a
+      tab, a newline, or a run of several spaces where the quote has one):
+      handled for free by the span-tracking design -- the single
+      normalized space's span covers the ENTIRE raw whitespace run that
+      collapsed into it (see `normalize_with_offsets` below), so any raw
+      whitespace variation in the middle of a match is included in
+      `unit_text[char_start:char_end]` by construction, not by a special
+      case in this function.
+    - **A raw, non-ASCII character inside the matched span that
+      `normalize_text` drops entirely** (e.g. a stray degree sign):
+      likewise handled for free -- `char_start`/`char_end` are the
+      endpoints of the match, and everything raw between them, dropped
+      characters included, is part of the Python slice by simple
+      contiguity.
+
+    Raises `AssertionError` if the normalized quote is not found -- this
+    can only happen if `normalize_with_offsets` and `normalize_text` have
+    drifted out of sync (see below for why that's structurally prevented,
+    not just hoped for), since `_is_verbatim_quote` already proved the
+    normalized quote is a substring of `normalize_text(unit_text)`."""
+    normalized_unit, spans = normalize_with_offsets(unit_text)
+    normalized_quote = normalize_text(quote)
+    idx = normalized_unit.find(normalized_quote)
+    if idx == -1:
+        raise AssertionError(
+            "quote passed the verbatim check but its normalized form was "
+            "not found during offset recovery -- normalize_with_offsets "
+            "and normalize_text have drifted apart"
+        )
+    char_start = spans[idx][0]
+    char_end = spans[idx + len(normalized_quote) - 1][1]
+    return char_start, char_end
+
+
+def _verify_ledger(drafts: list[_GroundedFactRaw], units: list[Unit]) -> list[Fact]:
+    """The three deterministic post-checks (D1/D2, brief §3.3 plus this
+    PRD's §9 addition), no LLM involved. Drops -- rather than fails the
+    step for -- any draft that cites a nonexistent unit, whose quote cannot
+    be verified verbatim, or whose quote fails the informativeness floor;
+    see §4.5 for why drop-and-log is the one policy governing all three.
+    A draft that survives all three checks has its quote LOCATED (not
+    copied) inside its unit's raw text (`_locate_quote_offsets`) and is
+    turned into a `Fact` carrying `char_start`/`char_end` in place of
+    `quote` -- the quote string itself never reaches the `Fact` model
+    (PRD 01 §4.3, PRD 03 §9). Surviving facts are renumbered to a
+    contiguous 1..N id sequence -- safe because nothing downstream has
+    referenced these ids yet (this is the ledger's first construction),
+    and it keeps the property Unit.id already has (PRD 02 §4.2): ids are
+    stable, contiguous, and gap-free."""
+    units_by_id = {u.id: u for u in units}
+    verified: list[Fact] = []
+    for draft in drafts:
+        unit = units_by_id.get(draft.unit_id)
+        if unit is None:
+            logger.warning(
+                "grounding: dropping fact citing unknown unit_id=%d (category=%s)",
+                draft.unit_id, draft.category,
+            )
+            continue
+        if not _is_verbatim_quote(draft.quote, unit.text):
+            logger.warning(
+                "grounding: dropping fact citing unit_id=%d -- quote not found "
+                "verbatim in unit text (category=%s)", draft.unit_id, draft.category,
+            )
+            continue
+        if not _is_informative_quote(draft.quote):
+            logger.warning(
+                "grounding: dropping fact citing unit_id=%d -- quote fails "
+                "informativeness floor (category=%s)", draft.unit_id, draft.category,
+            )
+            continue
+        char_start, char_end = _locate_quote_offsets(draft.quote, unit.text)
+        verified.append(
+            Fact(
+                id=0,  # placeholder; real ids assigned below once drops are known
+                category=draft.category,
+                unit_id=draft.unit_id,
+                char_start=char_start,
+                char_end=char_end,
+                text=draft.text,
+            )
+        )
+    return [fact.model_copy(update={"id": i}) for i, fact in enumerate(verified, start=1)]
+
+
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 _SIMPLIFY_PROMPT  = (_PROMPTS_DIR / "simplify_language.txt").read_text(encoding="utf-8")
