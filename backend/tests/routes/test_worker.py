@@ -2,7 +2,7 @@
 import copy
 from datetime import datetime, timedelta, timezone
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from flask import Flask
 from models.pipeline_events import AdapterStepEvent, AdapterResult, AdapterError
 from models.grading import build_grading_with_before_after_score
@@ -19,10 +19,12 @@ def _disable_oidc_verification(monkeypatch):
     target the auth gate re-enable it explicitly via monkeypatch.
     """
     monkeypatch.setenv("WORKER_VERIFY_OIDC", "false")
-    # Pipeline-call tests use minimal JobDoc stubs without provenance. The
-    # worker now resolves units before calling the pipeline, so keep those
-    # focused tests independent of the input-transport helper.
-    monkeypatch.setattr("routes.worker.resolve_units_from_job_doc", lambda job: [])
+    # Pipeline-call tests use minimal JobDoc stubs. Keep their input transport
+    # controlled at the worker boundary rather than reintroducing text or
+    # provenance fields on those Firestore-shaped docs.
+    monkeypatch.setattr(
+        "routes.worker.load_job_input", lambda job: ("Patient has hypertension.", [])
+    )
 
 
 @pytest.fixture
@@ -49,7 +51,6 @@ def _make_job_doc(status="not_started", stage=None, batch_group_id=None, source_
         "stage": stage,
         "batch_group_id": batch_group_id,
         "input_source_kind": source_kind,
-        "input_text": "Patient has hypertension.",
         "input_doc_id": None,
         "input_version": "v1-2",
         "grading_enabled": False,
@@ -146,6 +147,39 @@ def test_pipeline_error_fails_job(
     assert error_data["code"] == "PIPELINE_ERROR"
     assert error_data["details"] == "Pipeline exploded"
     mock_complete.assert_not_called()
+
+
+@patch("utils.firebase.firestore.client")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
+def test_execute_job_fails_cleanly_with_pipeline_error_when_input_payload_missing(
+    mock_get_doc, mock_fail, mock_fs_client, client_worker, monkeypatch
+):
+    """A missing input payload is terminal for this task, not a 500/retry."""
+    from errors import ErrorCode, SimplifyError
+
+    doc = _make_job_doc()
+    mock_get_doc.return_value = doc
+    mock_fs_client.return_value = MagicMock()
+
+    def fail_with_payload_missing(job_id, error_data):
+        doc["status"] = "error"
+        doc["error_data"] = error_data
+
+    mock_fail.side_effect = fail_with_payload_missing
+
+    def load_missing_payload(job):
+        raise SimplifyError(ErrorCode.PIPELINE_ERROR, "input payload missing")
+
+    monkeypatch.setattr("routes.worker.load_job_input", load_missing_payload)
+
+    worker_resp = client_worker.post(
+        "/internal/jobs/execute/job-1", headers=QUEUE_HEADER, content_type="application/json"
+    )
+
+    assert worker_resp.status_code == 200
+    assert doc["status"] == "error"
+    assert doc["error_data"]["code"] == "PIPELINE_ERROR"
 
 
 @patch("utils.firebase.firestore.client")
@@ -320,6 +354,16 @@ def _make_job_doc_with_pdf_upload(status="not_started", input_pdf_gcs_uri="gs://
     return doc
 
 
+def _make_job_doc_with_gcs_uploads(
+    status="not_started",
+    input_pdf_gcs_uri="gs://b/p.pdf",
+    input_payload_gcs_uri="gs://b/payload.json",
+):
+    doc = _make_job_doc_with_pdf_upload(status, input_pdf_gcs_uri)
+    doc["input_payload_gcs_uri"] = input_payload_gcs_uri
+    return doc
+
+
 @patch("routes.worker.delete_gcs_object")
 @patch("utils.firebase.firestore.client")
 @patch("routes.worker.complete_job")
@@ -351,6 +395,61 @@ def test_job_success_triggers_gcs_cleanup(
 
     assert resp.status_code == 200
     mock_delete_gcs.assert_called_once_with("gs://b/p.pdf")
+
+
+@patch("routes.worker.delete_gcs_object")
+@patch("utils.firebase.firestore.client")
+@patch("routes.worker.complete_job")
+@patch("routes.worker.update_job_stage")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
+def test_execute_job_finally_block_deletes_both_gcs_objects_on_success(
+    mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
+    mock_delete_gcs, client_worker,
+):
+    mock_get_doc.return_value = _make_job_doc_with_gcs_uploads()
+    mock_fs_client.return_value = MagicMock()
+
+    care_plan_mock = MagicMock()
+    grading_mock = MagicMock()
+
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
+
+    envelope_mock = MagicMock()
+    envelope_mock.to_dict.return_value = {"care_plan": {}, "metrics": {"saved_id": None}}
+
+    with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+        with patch("routes.worker.CarePlanInternal", return_value=envelope_mock):
+            resp = client_worker.post("/internal/jobs/execute/job-1", headers=QUEUE_HEADER)
+
+    assert resp.status_code == 200
+    mock_delete_gcs.assert_has_calls([call("gs://b/p.pdf"), call("gs://b/payload.json")])
+    assert mock_delete_gcs.call_count == 2
+
+
+@patch("routes.worker.delete_gcs_object")
+@patch("utils.firebase.firestore.client")
+@patch("routes.worker.complete_job")
+@patch("routes.worker.update_job_stage")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
+def test_execute_job_finally_block_deletes_both_gcs_objects_on_failure(
+    mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
+    mock_delete_gcs, client_worker,
+):
+    mock_get_doc.return_value = _make_job_doc_with_gcs_uploads()
+    mock_fs_client.return_value = MagicMock()
+
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        raise RuntimeError("boom")
+
+    with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+        resp = client_worker.post("/internal/jobs/execute/job-1", headers=QUEUE_HEADER)
+
+    assert resp.status_code == 500
+    mock_delete_gcs.assert_has_calls([call("gs://b/p.pdf"), call("gs://b/payload.json")])
+    assert mock_delete_gcs.call_count == 2
 
 
 @patch("routes.worker.delete_gcs_object")
@@ -1068,15 +1167,14 @@ def test_processing_job_with_no_started_at_is_retried(
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
 def test_worker_rejects_text_below_min_meaningful_content_as_empty_document(
-    mock_get_doc, mock_fail, mock_complete, mock_fs_client, client_worker
+    mock_get_doc, mock_fail, mock_complete, mock_fs_client, client_worker, monkeypatch
 ):
-    """Belt-and-suspenders alongside the resolve_uploaded_files-level check:
-    even if some other path put near-nothing into job.input_text, the worker
-    itself must never let it reach the LLM pipeline."""
+    """The worker must never let near-empty loaded input reach the LLM
+    pipeline, even if an upstream transport check was bypassed."""
     doc = _make_job_doc()
-    doc["input_text"] = "short"  # < MIN_MEANINGFUL_CONTENT_CHARS (20)
     mock_get_doc.return_value = doc
     mock_fs_client.return_value = MagicMock()
+    monkeypatch.setattr("routes.worker.load_job_input", lambda job: ("short", []))
 
     resp = client_worker.post("/internal/jobs/execute/job-1", headers=QUEUE_HEADER)
 
@@ -1088,7 +1186,7 @@ def test_worker_rejects_text_below_min_meaningful_content_as_empty_document(
 
 
 # ---------------------------------------------------------------------------
-# Top-level input_text cleared on terminal state (Finding 4)
+# Terminal-state behavior for loaded job input
 # ---------------------------------------------------------------------------
 
 @patch("utils.firebase.firestore.client")
@@ -1096,7 +1194,7 @@ def test_worker_rejects_text_below_min_meaningful_content_as_empty_document(
 @patch("routes.worker.update_job_stage")
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
-def test_job_completion_clears_top_level_input_text(
+def test_job_completion_with_loaded_input(
     mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client, client_worker
 ):
     mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
@@ -1124,13 +1222,13 @@ def test_job_completion_clears_top_level_input_text(
 @patch("utils.firebase.firestore.client")
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
-def test_job_failure_also_clears_top_level_input_text(
-    mock_get_doc, mock_fail, mock_fs_client, client_worker
+def test_job_failure_with_loaded_empty_input(
+    mock_get_doc, mock_fail, mock_fs_client, client_worker, monkeypatch
 ):
     doc = _make_job_doc_with_pdf_upload()
-    doc["input_text"] = "short"  # triggers the MIN_MEANINGFUL_CONTENT_CHARS EMPTY_DOCUMENT path
     mock_get_doc.return_value = doc
     mock_fs_client.return_value = MagicMock()
+    monkeypatch.setattr("routes.worker.load_job_input", lambda job: ("short", []))
 
     resp = client_worker.post("/internal/jobs/execute/job-1", headers=QUEUE_HEADER)
 
@@ -1141,11 +1239,11 @@ def test_job_failure_also_clears_top_level_input_text(
 @patch("utils.firebase.firestore.client")
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
-def test_job_unexpected_exception_clears_top_level_input_text(
+def test_job_unexpected_exception_with_loaded_input(
     mock_get_doc, mock_fail, mock_fs_client, client_worker
 ):
-    """The bottom except-Exception handler must also call fail_job (which
-    unconditionally clears input_text), not just the "clean" fail paths."""
+    """The bottom except-Exception handler must call fail_job for a pipeline
+    exception, not just for clean terminal paths."""
     mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
     mock_fs_client.return_value = MagicMock()
 
