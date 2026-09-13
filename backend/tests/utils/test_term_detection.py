@@ -270,6 +270,93 @@ class TestCurateGlossaryTerms(unittest.TestCase):
         for t in detected_terms:
             self.assertIn(t["term"], result_terms)
 
+    def test_curate_glossary_terms_backstop_truncates_kept_when_kept_alone_exceeds_it(self):
+        # 45 kept, 0 proposed: the backstop must still cap the total at 40,
+        # not silently return 45 (the review's exact reproduction case).
+        detected_terms = [
+            {
+                "term": f"kept-term-{i}", "matched_term": f"kept-term-{i}",
+                "definition": "d", "source": "s", "imgUrl": None, "altText": None,
+            }
+            for i in range(45)
+        ]
+        stub = _StubLLMClient(response={"drop": [], "propose": []})
+        result = curate_glossary_terms("irrelevant source text", detected_terms, llm_client=stub)
+        self.assertEqual(len(result), 40)
+
+    def test_curate_glossary_terms_backstop_caps_combined_kept_and_proposed_overflow(self):
+        # 30 kept + 15 proposed = 45 total; backstop must cut proposed first
+        # down to 10, keeping all 30 kept entries, for a total of exactly 40.
+        detected_terms = [
+            {
+                "term": f"kept-term-{i}", "matched_term": f"kept-term-{i}",
+                "definition": "d", "source": "s", "imgUrl": None, "altText": None,
+            }
+            for i in range(30)
+        ]
+        proposed = [
+            {"matched_term": f"proposed-term-{i}", "definition": "d"}
+            for i in range(15)
+        ]
+        source_text = " ".join(p["matched_term"] for p in proposed)
+        stub = _StubLLMClient(response={"drop": [], "propose": proposed})
+        result = curate_glossary_terms(source_text, detected_terms, llm_client=stub)
+        self.assertEqual(len(result), 40)
+        result_terms = {t["term"] for t in result}
+        for t in detected_terms:
+            self.assertIn(t["term"], result_terms)
+
+    def test_curate_glossary_terms_handles_propose_list_of_non_dicts(self):
+        detected_terms = [{
+            "term": "heart", "matched_term": "heart",
+            "definition": "d", "source": "s", "imgUrl": None, "altText": None,
+        }]
+        stub = _StubLLMClient(response={"drop": [], "propose": ["circumflex"]})
+        result = curate_glossary_terms(
+            "the circumflex artery was noted", detected_terms, llm_client=stub
+        )
+        self.assertEqual(result, detected_terms)
+
+    def test_curate_glossary_terms_handles_propose_none(self):
+        detected_terms = [{
+            "term": "heart", "matched_term": "heart",
+            "definition": "d", "source": "s", "imgUrl": None, "altText": None,
+        }]
+        stub = _StubLLMClient(response={"drop": [], "propose": None})
+        result = curate_glossary_terms("some text", detected_terms, llm_client=stub)
+        self.assertEqual(result, detected_terms)
+
+    def test_curate_glossary_terms_handles_propose_as_dict(self):
+        detected_terms = [{
+            "term": "heart", "matched_term": "heart",
+            "definition": "d", "source": "s", "imgUrl": None, "altText": None,
+        }]
+        stub = _StubLLMClient(response={"drop": [], "propose": {"a": 1}})
+        result = curate_glossary_terms("some text", detected_terms, llm_client=stub)
+        self.assertEqual(result, detected_terms)
+
+    def test_curate_glossary_terms_handles_malformed_drop_not_a_list(self):
+        detected_terms = [{
+            "term": "heart", "matched_term": "heart",
+            "definition": "d", "source": "s", "imgUrl": None, "altText": None,
+        }]
+        stub = _StubLLMClient(response={"drop": "heart", "propose": []})
+        result = curate_glossary_terms("some text", detected_terms, llm_client=stub)
+        # "drop" is ignored wholesale (not iterated char-by-char), so the
+        # detected term survives unfiltered rather than the call crashing.
+        self.assertEqual(result, detected_terms)
+
+    def test_curate_glossary_terms_skips_non_string_drop_entries(self):
+        detected_terms = [
+            {"term": "heart", "matched_term": "heart", "definition": "d1", "source": "s", "imgUrl": None, "altText": None},
+            {"term": "plaque", "matched_term": "plaque", "definition": "d2", "source": "s", "imgUrl": None, "altText": None},
+        ]
+        stub = _StubLLMClient(response={"drop": ["heart", 123, None, {"x": 1}], "propose": []})
+        result = curate_glossary_terms("heavy plaque was seen", detected_terms, llm_client=stub)
+        terms = {t["term"] for t in result}
+        self.assertNotIn("heart", terms)
+        self.assertIn("plaque", terms)
+
 
 if __name__ == "__main__":
     unittest.main()

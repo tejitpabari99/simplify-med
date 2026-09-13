@@ -184,6 +184,15 @@ def curate_glossary_terms(
     Returns a list shaped identically to lookup_medical_terms() hits, so
     downstream code (build_glossary_from_care_plan, build_terms_glossary)
     treats curated and proposed entries exactly like deterministic ones.
+
+    The entire body below the LLM call is defensive on purpose: the model's
+    JSON can be well-formed (a dict) but wrong-shaped in ways a plain
+    isinstance(raw, dict) check doesn't catch -- "propose" not a list,
+    "drop" not a list, individual propose items not dicts, etc. Every one
+    of those is validated and downgraded to "ignore this piece" rather than
+    left to raise, and the whole function is additionally wrapped so any
+    other, unanticipated failure still falls back to the deterministic
+    list untouched -- this function must never raise.
     """
     try:
         client = llm_client or LLMClient()
@@ -197,48 +206,92 @@ def curate_glossary_terms(
         )
         if not isinstance(raw, dict):
             raise ValueError(f"expected dict, got {type(raw)}")
-        drop = {str(d).strip().lower() for d in raw.get("drop", [])}
-        propose = raw.get("propose", [])
+
+        drop_raw = raw.get("drop", [])
+        if not isinstance(drop_raw, list):
+            logger.warning(
+                "curate_glossary_terms: 'drop' was not a list (got %s) - ignoring",
+                type(drop_raw).__name__,
+            )
+            drop_raw = []
+        drop = set()
+        skipped_drop = 0
+        for d in drop_raw:
+            if isinstance(d, str):
+                drop.add(d.strip().lower())
+            else:
+                skipped_drop += 1
+        if skipped_drop:
+            logger.warning(
+                "curate_glossary_terms: skipped %d malformed 'drop' entries", skipped_drop
+            )
+
+        propose_raw = raw.get("propose", [])
+        if not isinstance(propose_raw, list):
+            logger.warning(
+                "curate_glossary_terms: 'propose' was not a list (got %s) - ignoring",
+                type(propose_raw).__name__,
+            )
+            propose_raw = []
+
+        kept = [t for t in detected_terms if t["term"].strip().lower() not in drop]
+        existing = {t["matched_term"].strip().lower() for t in kept}
+        normalized_source = normalize_text(source_text)
+
+        proposed_hits = []
+        skipped_propose = 0
+        for item in propose_raw:
+            if not isinstance(item, dict):
+                skipped_propose += 1
+                continue
+            matched_term = str(item.get("matched_term", "")).strip()
+            definition = str(item.get("definition", "")).strip()
+            if not matched_term or not definition or matched_term.lower() in existing:
+                continue
+            # Deterministic guard: a proposed term must actually be a substring
+            # of the note. A model that "proposes" a word not in the source
+            # cannot have extracted it -- cannot be a real finding.
+            if not contains_normalized_term(normalized_source, normalize_text(matched_term)):
+                continue
+            existing.add(matched_term.lower())
+            proposed_hits.append({
+                "term": matched_term,
+                "matched_term": matched_term,
+                "definition": definition,
+                "source": get_source_name("llm_proposed"),
+                "imgUrl": None,
+                "altText": None,
+                "action": "preserve_define",
+            })
+        if skipped_propose:
+            logger.warning(
+                "curate_glossary_terms: skipped %d malformed 'propose' entries", skipped_propose
+            )
+
+        combined = kept + proposed_hits
+        if len(combined) > _CURATION_TOTAL_BACKSTOP:
+            logger.warning(
+                "curate_glossary_terms: truncating %d total terms to backstop %d",
+                len(combined), _CURATION_TOTAL_BACKSTOP,
+            )
+            overflow = len(combined) - _CURATION_TOTAL_BACKSTOP
+            # Cut proposed_hits first -- entries that survived both the
+            # dictionary lookup and the LLM's own drop-filter are higher-
+            # confidence than a raw proposal (PRD 07 SS4.3). Only trim
+            # kept's tail if proposed_hits alone can't absorb the overflow,
+            # so the backstop is a true total cap on kept + proposed_hits,
+            # never a no-op when kept alone already exceeds it.
+            trim_from_proposed = min(overflow, len(proposed_hits))
+            if trim_from_proposed:
+                proposed_hits = proposed_hits[:-trim_from_proposed]
+            remaining_overflow = overflow - trim_from_proposed
+            if remaining_overflow:
+                kept = kept[: len(kept) - remaining_overflow]
+            combined = kept + proposed_hits
+        return combined
     except Exception:
         logger.exception("curate_glossary_terms: curation call failed - keeping detected terms unfiltered")
         return detected_terms
-
-    kept = [t for t in detected_terms if t["term"].strip().lower() not in drop]
-    existing = {t["matched_term"].strip().lower() for t in kept}
-    normalized_source = normalize_text(source_text)
-
-    proposed_hits = []
-    for item in propose:
-        matched_term = str(item.get("matched_term", "")).strip()
-        definition = str(item.get("definition", "")).strip()
-        if not matched_term or not definition or matched_term.lower() in existing:
-            continue
-        # Deterministic guard: a proposed term must actually be a substring
-        # of the note. A model that "proposes" a word not in the source
-        # cannot have extracted it -- cannot be a real finding.
-        if not contains_normalized_term(normalized_source, normalize_text(matched_term)):
-            continue
-        existing.add(matched_term.lower())
-        proposed_hits.append({
-            "term": matched_term,
-            "matched_term": matched_term,
-            "definition": definition,
-            "source": get_source_name("llm_proposed"),
-            "imgUrl": None,
-            "altText": None,
-            "action": "preserve_define",
-        })
-
-    combined = kept + proposed_hits
-    if len(combined) > _CURATION_TOTAL_BACKSTOP:
-        logger.warning(
-            "curate_glossary_terms: truncating %d total terms to backstop %d",
-            len(combined), _CURATION_TOTAL_BACKSTOP,
-        )
-        overflow = len(combined) - _CURATION_TOTAL_BACKSTOP
-        proposed_hits = proposed_hits[: max(0, len(proposed_hits) - overflow)]
-        combined = kept + proposed_hits
-    return combined
 
 
 def format_substitution_candidates_for_prompt(candidates: list[dict]) -> str:
