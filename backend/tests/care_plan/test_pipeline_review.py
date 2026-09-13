@@ -15,7 +15,6 @@ from care_plan.pipeline import (
 from models.care_plan.care_plan import CarePlan, Medication
 from models.ledger import Fact
 from models.review import Correction, CoverageEntry, ReviewResult
-from utils.constants import Constants
 
 
 def _medication(**overrides) -> Medication:

@@ -9,7 +9,7 @@ import copy
 
 import pytest
 
-from care_plan.pipeline import CarePlanPipeline, _verify_correction_diff
+from care_plan.pipeline import CarePlanPipeline, _split_array_path, _verify_correction_diff
 from errors import SimplifyError, ErrorCode
 from models.care_plan.care_plan import CarePlan
 from models.review import Correction
@@ -307,3 +307,166 @@ def test_correct_raises_on_diff_violation_rather_than_silently_falling_back():
     assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
     # correct() itself never falls back to `before` -- no return value at all
     # on this path; the caller (06's iter_steps) owns the fallback (§4.8).
+
+
+# ---------------------------------------------------------------------------
+# Fix regression: nested-path corrections in the diff check (PRD §4.2 rule 1
+# gives `diagnosis.details[0].severity` and `other[1].steps[0]` as literal
+# valid paths -- _diff_item's original one-dict-level path matching wrongly
+# rejected a legitimate `correct` on either). Also: _split_array_path must
+# handle a dotted `remove` path (e.g. "diagnosis.details[0]") without
+# crashing.
+# ---------------------------------------------------------------------------
+
+def test_diff_check_permits_correct_on_diagnosis_details_nested_leaf():
+    """PRD §4.2 rule 1's own literal example path -- `diagnosis.details[0]`
+    is a list-of-dicts nested one level inside a top-level dict field, and
+    `.description`/`.severity` is a leaf two dict-levels deep. A `correct`
+    naming that exact leaf must be permitted."""
+    before = _base_care_plan(
+        diagnosis={
+            "changed_since_last_visit": "",
+            "details": [
+                {
+                    "title": "Hypertension", "plain_name": "high blood pressure",
+                    "description": "your blood pressure has been running high",
+                    "what_it_means_for_you": "", "severity": "medium",
+                },
+            ],
+        },
+    )
+    corrections = [Correction(op="correct", path="diagnosis.details[0].description", value="new text")]
+    after = _mutate(
+        before, lambda d: d["diagnosis"]["details"][0].__setitem__("description", "new text")
+    )
+
+    _verify_correction_diff(before, after, corrections)  # no exception
+
+
+def test_diff_check_rejects_sibling_change_in_same_nested_list():
+    """A correction naming one nested-list item's leaf must not create a
+    loophole for an unnamed sibling item in the SAME nested list."""
+    before = _base_care_plan(
+        diagnosis={
+            "changed_since_last_visit": "",
+            "details": [
+                {"title": "Hypertension", "plain_name": "", "description": "d0",
+                 "what_it_means_for_you": "", "severity": None},
+                {"title": "Diabetes", "plain_name": "", "description": "d1",
+                 "what_it_means_for_you": "", "severity": None},
+            ],
+        },
+    )
+    corrections = [Correction(op="correct", path="diagnosis.details[0].description", value="new d0")]
+
+    def _mutate_fn(d):
+        d["diagnosis"]["details"][0]["description"] = "new d0"
+        d["diagnosis"]["details"][1]["description"] = "an unrequested rewrite of the sibling entry"
+
+    after = _mutate(before, _mutate_fn)
+
+    with pytest.raises(SimplifyError) as exc_info:
+        _verify_correction_diff(before, after, corrections)
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+
+
+def test_diff_check_permits_correct_on_other_steps_nested_leaf():
+    """PRD §4.2 rule 1's other literal example path -- `other[1].steps[0]`
+    is a plain list nested inside a top-level list-of-dicts field."""
+    before = _base_care_plan(
+        other=[
+            {"title": "Wound care", "why": "", "steps": ["clean the area", "change the bandage"],
+             "description": "", "frequency": "", "duration": "", "status": "to_do",
+             "source_fact_ids": [1]},
+            {"title": "Diet", "why": "", "steps": ["low sodium"], "description": "",
+             "frequency": "", "duration": "", "status": "to_do", "source_fact_ids": [1]},
+        ],
+    )
+    corrections = [Correction(op="correct", path="other[1].steps[0]", value="low salt diet")]
+    after = _mutate(before, lambda d: d["other"][1]["steps"].__setitem__(0, "low salt diet"))
+
+    _verify_correction_diff(before, after, corrections)  # no exception
+
+
+def test_diff_check_rejects_sibling_step_change_in_same_nested_list():
+    before = _base_care_plan(
+        other=[
+            {"title": "Wound care", "why": "", "steps": ["clean the area", "change the bandage"],
+             "description": "", "frequency": "", "duration": "", "status": "to_do",
+             "source_fact_ids": [1]},
+        ],
+    )
+    corrections = [Correction(op="correct", path="other[0].steps[0]", value="clean the area daily")]
+
+    def _mutate_fn(d):
+        d["other"][0]["steps"][0] = "clean the area daily"
+        d["other"][0]["steps"][1] = "an unrequested rewrite of step two"
+
+    after = _mutate(before, _mutate_fn)
+
+    with pytest.raises(SimplifyError) as exc_info:
+        _verify_correction_diff(before, after, corrections)
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+
+
+def test_diff_check_accounts_for_remove_on_dotted_nested_array_path():
+    """Regression: _split_array_path must handle a dotted `remove` path
+    (e.g. "diagnosis.details[0]") without raising AttributeError --
+    _PATH_SEGMENT_RE has no dot handling, so the whole dotted path can
+    never `fullmatch`. `diagnosis.details[N]` is a legitimate `remove`
+    target under §4.2 rule 3 ("an item with no supporting fact at all" --
+    JOB 1's "an added diagnosis" case) even though review.txt's own
+    inline example only shows a top-level array."""
+    before = _base_care_plan(
+        diagnosis={
+            "changed_since_last_visit": "",
+            "details": [
+                {"title": "Fabricated diagnosis", "plain_name": "", "description": "",
+                 "what_it_means_for_you": "", "severity": None},
+                {"title": "Hypertension", "plain_name": "", "description": "d1",
+                 "what_it_means_for_you": "", "severity": None},
+            ],
+        },
+    )
+    corrections = [Correction(op="remove", path="diagnosis.details[0]")]
+
+    def _mutate_fn(d):
+        d["diagnosis"]["details"] = [d["diagnosis"]["details"][1]]
+
+    after = _mutate(before, _mutate_fn)
+
+    _verify_correction_diff(before, after, corrections)  # no exception, no AttributeError
+
+
+def test_diff_check_rejects_wrong_surviving_count_on_nested_array():
+    """The nested-array survivor-count check must reject a nested `remove`
+    that didn't actually happen, the same way the top-level check does."""
+    before = _base_care_plan(
+        diagnosis={
+            "changed_since_last_visit": "",
+            "details": [
+                {"title": "Fabricated diagnosis", "plain_name": "", "description": "",
+                 "what_it_means_for_you": "", "severity": None},
+                {"title": "Hypertension", "plain_name": "", "description": "d1",
+                 "what_it_means_for_you": "", "severity": None},
+            ],
+        },
+    )
+    corrections = [Correction(op="remove", path="diagnosis.details[0]")]
+
+    after = _mutate(before, lambda d: None)  # removal never actually applied
+
+    with pytest.raises(SimplifyError) as exc_info:
+        _verify_correction_diff(before, after, corrections)
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+    assert "diagnosis.details" in exc_info.value.detail
+
+
+def test_split_array_path_raises_simplify_error_on_non_array_remove_path():
+    """A malformed `remove` path (its last segment carries no `[N]` index)
+    must fail cleanly with SimplifyError, not crash with AttributeError --
+    e.g. an adversarial/corrupted correction naming a bare list field
+    instead of one of its items."""
+    with pytest.raises(SimplifyError) as exc_info:
+        _split_array_path("summary_fact_ids")
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED

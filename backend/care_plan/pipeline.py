@@ -517,8 +517,6 @@ _PII_ELIGIBLE_FIELDS = {
     "steps", "questions", "low_priority",
 }
 _MAX_PII_TOKEN_DELTA = 4
-_LIST_FIELDS = {"medications", "tests", "procedures", "other", "follow_up", "warning_signs",
-                 "reason_for_visit", "questions", "low_priority"}
 
 
 def _looks_like_pii_substitution(old: str, new: str) -> bool:
@@ -533,55 +531,69 @@ def _looks_like_pii_substitution(old: str, new: str) -> bool:
 
 
 def _split_array_path(path: str) -> tuple[str, int]:
-    """"warning_signs[3]" -> ("warning_signs", 3). Used only by the diff
-    check to convert a `remove` correction's path into an (array, index)
-    pair (PRD 05 §4.6)."""
-    m = _PATH_SEGMENT_RE.fullmatch(path)
-    return m.group(1), int(m.group(3))
-
-
-def _diff_item(before_item, after_item, path_prefix: str, named: set[str]) -> None:
-    """Walk every field of one surviving array item (or, via
-    _check_scalar_or_nested, one level into `diagnosis`), raising on any
-    change that is neither a named correction target nor a bounded PII
-    swap on a `_PII_ELIGIBLE_FIELDS` field (PRD 05 §4.6)."""
-    for key, before_v in (before_item.items() if isinstance(before_item, dict) else enumerate([before_item])):
-        after_v = after_item[key] if isinstance(after_item, dict) else after_item
-        full_path = f"{path_prefix}.{key}" if isinstance(before_item, dict) else path_prefix
-        if before_v == after_v:
-            continue
-        if full_path in named or any(full_path.startswith(p) for p in named):
-            continue
-        if isinstance(before_v, str) and isinstance(after_v, str) and \
-           key in _PII_ELIGIBLE_FIELDS and _looks_like_pii_substitution(before_v, after_v):
-            continue
+    """"warning_signs[3]" -> ("warning_signs", 3); "diagnosis.details[0]" ->
+    ("diagnosis.details", 0) -- the dotted array path (at whatever nesting
+    depth `path` addresses -- anything `_resolve_path` accepts, per PRD 05
+    §4.2 rule 1) paired with the removed index. Used only by the diff check
+    to convert a `remove` correction's path into this pair (PRD 05 §4.6).
+    Splits on the LAST "." so a dotted prefix (if any) is preserved rather
+    than discarded -- fixes a prior bug where this only handled an
+    undotted, top-level array path and crashed with AttributeError on
+    anything dotted. Raises SimplifyError (PIPELINE_VALIDATION_FAILED),
+    rather than crashing, if `path`'s last segment carries no `[N]` index --
+    a malformed `remove` target the reviewer's vocabulary (§4.2 rule 3)
+    never legitimately produces (every `remove` but "summary", which is
+    special-cased by the caller before this is ever called, must name an
+    array item), but that a corrupted/adversarial correction list could."""
+    head, _, last = path.rpartition(".")
+    m = _PATH_SEGMENT_RE.fullmatch(last)
+    if not m or m.group(3) is None:
         raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED,
-            detail=f"corrector changed unnamed, non-PII field: {full_path}")
+            detail=f"remove correction does not address an array item: {path!r}")
+    array_path = f"{head}.{m.group(1)}" if head else m.group(1)
+    return array_path, int(m.group(3))
 
 
-def _check_scalar_or_nested(before_v, after_v, field: str, named: set[str]) -> None:
-    """Diff check for the non-list top-level CarePlan fields (doc_type,
-    version, summary, summary_fact_ids, diagnosis, note, terms). `diagnosis`
-    is a nested object, not a list-of-items field -- recurse one level into
-    its own keys (`changed_since_last_visit`, `details`) the same way
-    `_diff_item` recurses into a dict item's keys, using `diagnosis.<key>`
-    as the path prefix (PRD 05 §4.6). Every other field here is compared as
-    one leaf value: `summary`'s only tolerated non-named change is a small
-    PII swap (`summary` is in `_PII_ELIGIBLE_FIELDS`) since `correct` may
-    never target `summary` directly (§4.2) -- a `remove` clears it to `""`
-    via the named-path branch instead."""
-    if field == "diagnosis":
-        _diff_item(before_v, after_v, "diagnosis", named)
+def _diff_item(before_v, after_v, path: str, named: set[str], removed_by_array: dict[str, set[int]]) -> None:
+    """Recursively compare one node of the CarePlan tree at `path` (a dict,
+    a list, or a scalar leaf), raising on any change that is neither a
+    named correction target, a bounded PII swap on a `_PII_ELIGIBLE_FIELDS`
+    leaf, nor accounted for by a `remove` correction's effect on the array
+    at `path` (PRD 05 §4.2, §4.6). Recurses through dicts and lists
+    uniformly at ANY nesting depth -- every path `_resolve_path` can
+    address (`medications[N].dosage`, `diagnosis.details[N].description`,
+    `other[N].steps[M]`, ...) is matched exactly at its own leaf, never
+    only one dict level deep, so a sibling leaf elsewhere in the same
+    nested list is still caught. Containers (dicts/lists) are always
+    recursed into structurally -- never shortcut on outer equality -- so a
+    `remove` expected somewhere further down (e.g. `diagnosis.details`
+    unchanged in length because the corrector silently ignored the
+    correction) is still caught even when an ancestor container happens to
+    compare equal overall; the equality shortcut only applies at an actual
+    scalar leaf, where no removal bookkeeping ever applies."""
+    if isinstance(before_v, list) and isinstance(after_v, list):
+        removed = removed_by_array.get(path, set())
+        expected_survivors = [i for i in range(len(before_v)) if i not in removed]
+        if len(after_v) != len(expected_survivors):
+            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED,
+                detail=f"{path}: expected {len(expected_survivors)} items after correction, got {len(after_v)}")
+        for k, orig_idx in enumerate(expected_survivors):
+            _diff_item(before_v[orig_idx], after_v[k], f"{path}[{orig_idx}]", named, removed_by_array)
+        return
+    if isinstance(before_v, dict) and isinstance(after_v, dict):
+        for key, bv in before_v.items():
+            _diff_item(bv, after_v[key], f"{path}.{key}", named, removed_by_array)
         return
     if before_v == after_v:
         return
-    if field in named or any(field.startswith(p) for p in named):
+    if path in named:
         return
+    field_name = path.rsplit(".", 1)[-1].split("[", 1)[0]
     if isinstance(before_v, str) and isinstance(after_v, str) and \
-       field in _PII_ELIGIBLE_FIELDS and _looks_like_pii_substitution(before_v, after_v):
+       field_name in _PII_ELIGIBLE_FIELDS and _looks_like_pii_substitution(before_v, after_v):
         return
     raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED,
-        detail=f"corrector changed unnamed, non-PII field: {field}")
+        detail=f"corrector changed unnamed, non-PII field: {path}")
 
 
 def _verify_correction_diff(before: CarePlan, after: CarePlan, corrections: list[Correction]) -> None:
@@ -589,9 +601,14 @@ def _verify_correction_diff(before: CarePlan, after: CarePlan, corrections: list
     aligned -- correct.txt requires order preservation, so a `remove`
     correction's effect on an array's length is accounted for by tracking
     which original indices survive, rather than by re-aligning content.
-    Raises SimplifyError(PIPELINE_VALIDATION_FAILED) on any violation; the
-    caller (06's iter_steps) is the one that falls back to the pre-
-    correction care_plan (§4.8) -- this function never falls back itself."""
+    `removed_by_array` is keyed by the full dotted array path at whatever
+    depth a `remove` correction addresses (`"warning_signs"`, but also
+    `"diagnosis.details"` -- PRD 05 §4.2 rule 1's paths are not restricted
+    to one dict level), so `_diff_item`'s survivor accounting applies
+    uniformly at every nesting depth, not just at the top level. Raises
+    SimplifyError(PIPELINE_VALIDATION_FAILED) on any violation; the caller
+    (06's iter_steps) is the one that falls back to the pre-correction
+    care_plan (§4.8) -- this function never falls back itself."""
     before_d, after_d = before.model_dump(mode="json"), after.model_dump(mode="json")
     named = {c.path for c in corrections}
     removed_by_array: dict[str, set[int]] = {}   # e.g. "warning_signs" -> {1, 3}
@@ -601,16 +618,7 @@ def _verify_correction_diff(before: CarePlan, after: CarePlan, corrections: list
             removed_by_array.setdefault(arr, set()).add(idx)
 
     for field in CarePlan.model_fields:
-        if field not in _LIST_FIELDS:
-            _check_scalar_or_nested(before_d[field], after_d[field], field, named)
-            continue
-        before_arr, after_arr, removed = before_d[field], after_d[field], removed_by_array.get(field, set())
-        expected_survivors = [i for i in range(len(before_arr)) if i not in removed]
-        if len(after_arr) != len(expected_survivors):
-            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED,
-                detail=f"{field}: expected {len(expected_survivors)} items after correction, got {len(after_arr)}")
-        for k, orig_idx in enumerate(expected_survivors):
-            _diff_item(before_arr[orig_idx], after_arr[k], f"{field}[{orig_idx}]", named)
+        _diff_item(before_d[field], after_d[field], field, named, removed_by_array)
 
 
 class CarePlanPipeline:
