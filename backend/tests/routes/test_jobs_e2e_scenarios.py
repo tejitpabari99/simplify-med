@@ -470,6 +470,7 @@ class TestScenario1TypicalDischargeSummary:
 
         # Raw input text must be gone from BOTH copies (Finding 4).
         assert "input_text" not in doc
+        assert "input_provenance" not in doc
         assert doc["output_data"]["input"].get("text") is None
         assert "raw" not in doc["output_data"]["care_plan"]
 
@@ -533,6 +534,35 @@ class TestScenario2PhonePhotosOCR:
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
         assert doc["status"] == "completed"
         assert "input_text" not in doc
+
+    def test_multi_file_upload_processing_doc_has_non_empty_input_provenance(self, client_jobs, fake_db, auth_anon):
+        # Same 3-image multipart upload as the test above, but stops right
+        # after POST /jobs (before _run_worker) -- proves the processing-state
+        # doc itself carries input_provenance (PRD 02 §4.11's wiring), not
+        # just that it's gone once the worker clears it later.
+        images = [_make_jpeg_bytes(color=c) for c in [(200, 50, 50), (50, 200, 50), (50, 50, 200)]]
+        ocr_texts = [
+            "Page 1 of 3: Discharge instructions. Take ibuprofen 400mg every 6 hours as needed for pain.",
+            "Page 2 of 3: Follow up with your primary care physician within 7 days of discharge.",
+            "Page 3 of 3: Return to the ER if you experience fever above 101F or worsening pain.",
+        ]
+
+        data = {"files": [
+            (io.BytesIO(images[0]), "page1.jpg"),
+            (io.BytesIO(images[1]), "page2.jpg"),
+            (io.BytesIO(images[2]), "page3.jpg"),
+        ]}
+
+        with patch("services.care_plan_input.extract_text_from_image", side_effect=ocr_texts):
+            resp = _post_job(
+                client_jobs, auth_anon, data=data, content_type="multipart/form-data",
+            )
+        assert resp.status_code == 202
+        job_id = resp.get_json()["job_id"]
+
+        doc = fake_db.raw_doc("care_plan_outputs", job_id)
+        assert isinstance(doc["input_provenance"], list)
+        assert len(doc["input_provenance"]) > 0
 
 
 # ===========================================================================
@@ -662,6 +692,7 @@ class TestScenario4MultibyteNearLimits:
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
         assert doc["status"] == "completed"
         assert "input_text" not in doc  # the near-max-byte input is fully cleared
+        assert "input_provenance" not in doc  # cleared alongside input_text
 
         size = _doc_size_bytes(doc)
         assert size < 1_048_576, f"completed doc is {size} bytes"
