@@ -16,9 +16,7 @@ from utils.image_ocr import extract_text_from_image
 from utils.misc import extract_text_from_html, text_artifact_filename
 from utils.pdf import merge_pdfs, extract_pages_from_pdf
 from models.input import ResolvedInput
-from models.ledger import Unit
 from models.provenance import SourceSpan, JobInputPayload
-from services.unitizer import unitize
 from errors import ErrorCode, SimplifyError
 
 logger = logging.getLogger(__name__)
@@ -436,18 +434,32 @@ def resolve_uploaded_files(
     ), combined_pdf_bytes
 
 
-def resolve_input_from_job_doc(job) -> str:  # job: models.job.JobDoc
-    return job.input_text or ""
+def load_job_input(job) -> tuple[str, list[SourceSpan]]:  # job: models.job.JobDoc
+    """Download and parse the (text, provenance) pair the API wrote to GCS
+    at job-creation time (upload_job_input, §4.5) -- the one GCS read this
+    performs per job, spent once at the start of the worker's run
+    (routes/worker.py). Supersedes resolve_input_from_job_doc and
+    resolve_units_from_job_doc (PRD 02 §4.7), which read job.input_text/
+    job.input_provenance directly off the job doc; neither field exists on
+    JobDoc any more (PRD 09 §4.11).
 
-
-def resolve_units_from_job_doc(job) -> list[Unit]:  # job: models.job.JobDoc
-    """Reconstruct the deterministic unit list for a job from its persisted
-    (input_text, input_provenance) pair. Call once, in the worker,
-    immediately before grounding (03) -- this is the read side of the
-    provenance-map design (PRD 02 §4.1): the API computed and persisted
-    input_provenance at job-creation time; this is where it gets spent,
-    materializing the (larger, per-line) Unit list only in memory, never
-    back to Firestore. The actual call site inside the pipeline run is
-    06's (pipeline-orchestration) to wire up.
+    Raises SimplifyError(ErrorCode.PIPELINE_ERROR) -- never a bare
+    exception -- if the job has no input_payload_gcs_uri at all, the
+    object is missing, or its contents fail to parse as a JobInputPayload.
+    This is an expected failure mode, not just a theoretical one: see PRD
+    09 §4.10 for a concrete, code-derivable race that produces it.
     """
-    return unitize(job.input_text or "", job.input_provenance)
+    if not job.input_payload_gcs_uri:
+        raise SimplifyError(ErrorCode.PIPELINE_ERROR, detail="job has no input_payload_gcs_uri")
+    try:
+        raw = download_gcs_string(job.input_payload_gcs_uri)
+        payload = JobInputPayload.from_dict(json.loads(raw))
+    except SimplifyError:
+        raise
+    except Exception as exc:
+        raise SimplifyError(
+            ErrorCode.PIPELINE_ERROR,
+            detail=f"failed to load job input from GCS: {type(exc).__name__}",
+            original=exc,
+        ) from exc
+    return payload.text, payload.provenance
