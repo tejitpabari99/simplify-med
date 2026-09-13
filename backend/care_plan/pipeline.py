@@ -494,6 +494,125 @@ def _sanitize_review_result(result: ReviewResult, care_plan: CarePlan, facts: li
     return result.model_copy(update={"corrections": clean, "coverage": coverage})
 
 
+def _format_corrections_for_prompt(corrections: list[Correction]) -> str:
+    """Render each correction as one JSON line for the correct.txt prompt's
+    CORRECTIONS block (PRD 05 §4.6). No PRD-cited exact text -- any correct,
+    readable one-line-per-correction JSON rendering satisfies this."""
+    lines = []
+    for c in corrections:
+        obj = {"op": c.op, "path": c.path}
+        if c.value is not None:
+            obj["value"] = c.value
+        lines.append(json.dumps(obj))
+    return "\n".join(lines)
+
+
+# The corrector-diff check (PRD 05 §4.6) -- the brief's named mitigation for
+# the corrector's soft spot: assert nothing outside the named corrections
+# (plus a bounded PII sweep) changed.
+_PII_ELIGIBLE_FIELDS = {
+    "summary", "why", "description", "what_it_means_for_you", "instructions",
+    "what_to_expect", "what_it_might_mean", "related_to",
+    "changed_since_last_visit", "side_effects_to_watch", "preparation",
+    "steps", "questions", "low_priority",
+}
+_MAX_PII_TOKEN_DELTA = 4
+_LIST_FIELDS = {"medications", "tests", "procedures", "other", "follow_up", "warning_signs",
+                 "reason_for_visit", "questions", "low_priority"}
+
+
+def _looks_like_pii_substitution(old: str, new: str) -> bool:
+    """True if old->new plausibly represents ONLY a name/facility swap.
+    Word-level SequenceMatcher opcodes; count non-'equal' tokens on either
+    side. A targeted "Doctor Alok Singh" -> "your doctor" swap stays under
+    the threshold; a resummarized sentence does not."""
+    old_w, new_w = old.split(), new.split()
+    ops = difflib.SequenceMatcher(a=old_w, b=new_w).get_opcodes()
+    changed = sum(max(i2 - i1, j2 - j1) for tag, i1, i2, j1, j2 in ops if tag != "equal")
+    return changed <= _MAX_PII_TOKEN_DELTA
+
+
+def _split_array_path(path: str) -> tuple[str, int]:
+    """"warning_signs[3]" -> ("warning_signs", 3). Used only by the diff
+    check to convert a `remove` correction's path into an (array, index)
+    pair (PRD 05 §4.6)."""
+    m = _PATH_SEGMENT_RE.fullmatch(path)
+    return m.group(1), int(m.group(3))
+
+
+def _diff_item(before_item, after_item, path_prefix: str, named: set[str]) -> None:
+    """Walk every field of one surviving array item (or, via
+    _check_scalar_or_nested, one level into `diagnosis`), raising on any
+    change that is neither a named correction target nor a bounded PII
+    swap on a `_PII_ELIGIBLE_FIELDS` field (PRD 05 §4.6)."""
+    for key, before_v in (before_item.items() if isinstance(before_item, dict) else enumerate([before_item])):
+        after_v = after_item[key] if isinstance(after_item, dict) else after_item
+        full_path = f"{path_prefix}.{key}" if isinstance(before_item, dict) else path_prefix
+        if before_v == after_v:
+            continue
+        if full_path in named or any(full_path.startswith(p) for p in named):
+            continue
+        if isinstance(before_v, str) and isinstance(after_v, str) and \
+           key in _PII_ELIGIBLE_FIELDS and _looks_like_pii_substitution(before_v, after_v):
+            continue
+        raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED,
+            detail=f"corrector changed unnamed, non-PII field: {full_path}")
+
+
+def _check_scalar_or_nested(before_v, after_v, field: str, named: set[str]) -> None:
+    """Diff check for the non-list top-level CarePlan fields (doc_type,
+    version, summary, summary_fact_ids, diagnosis, note, terms). `diagnosis`
+    is a nested object, not a list-of-items field -- recurse one level into
+    its own keys (`changed_since_last_visit`, `details`) the same way
+    `_diff_item` recurses into a dict item's keys, using `diagnosis.<key>`
+    as the path prefix (PRD 05 §4.6). Every other field here is compared as
+    one leaf value: `summary`'s only tolerated non-named change is a small
+    PII swap (`summary` is in `_PII_ELIGIBLE_FIELDS`) since `correct` may
+    never target `summary` directly (§4.2) -- a `remove` clears it to `""`
+    via the named-path branch instead."""
+    if field == "diagnosis":
+        _diff_item(before_v, after_v, "diagnosis", named)
+        return
+    if before_v == after_v:
+        return
+    if field in named or any(field.startswith(p) for p in named):
+        return
+    if isinstance(before_v, str) and isinstance(after_v, str) and \
+       field in _PII_ELIGIBLE_FIELDS and _looks_like_pii_substitution(before_v, after_v):
+        return
+    raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED,
+        detail=f"corrector changed unnamed, non-PII field: {field}")
+
+
+def _verify_correction_diff(before: CarePlan, after: CarePlan, corrections: list[Correction]) -> None:
+    """The corrector-diff check (PRD 05 §4.6): position-based, not content-
+    aligned -- correct.txt requires order preservation, so a `remove`
+    correction's effect on an array's length is accounted for by tracking
+    which original indices survive, rather than by re-aligning content.
+    Raises SimplifyError(PIPELINE_VALIDATION_FAILED) on any violation; the
+    caller (06's iter_steps) is the one that falls back to the pre-
+    correction care_plan (§4.8) -- this function never falls back itself."""
+    before_d, after_d = before.model_dump(mode="json"), after.model_dump(mode="json")
+    named = {c.path for c in corrections}
+    removed_by_array: dict[str, set[int]] = {}   # e.g. "warning_signs" -> {1, 3}
+    for c in corrections:
+        if c.op == "remove" and c.path != "summary":
+            arr, idx = _split_array_path(c.path)
+            removed_by_array.setdefault(arr, set()).add(idx)
+
+    for field in CarePlan.model_fields:
+        if field not in _LIST_FIELDS:
+            _check_scalar_or_nested(before_d[field], after_d[field], field, named)
+            continue
+        before_arr, after_arr, removed = before_d[field], after_d[field], removed_by_array.get(field, set())
+        expected_survivors = [i for i in range(len(before_arr)) if i not in removed]
+        if len(after_arr) != len(expected_survivors):
+            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED,
+                detail=f"{field}: expected {len(expected_survivors)} items after correction, got {len(after_arr)}")
+        for k, orig_idx in enumerate(expected_survivors):
+            _diff_item(before_arr[orig_idx], after_arr[k], f"{field}[{orig_idx}]", named)
+
+
 class CarePlanPipeline:
     """Care plan pipeline with deterministic term detection."""
 
@@ -637,6 +756,43 @@ class CarePlanPipeline:
             raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
 
         return _sanitize_review_result(result, care_plan, facts)
+
+    def correct(
+        self,
+        care_plan: CarePlan,
+        corrections: list[Correction],
+        substitution_candidates: list[dict],
+        preserve_and_define_terms: list[dict],
+        abbreviations: list[dict],
+    ) -> CarePlan:
+        """Correct: applies exactly the named corrections plus a PII sweep
+        (brief §3.6). Raises SimplifyError on any failure, INCLUDING a diff-
+        check rejection -- correct() itself never "falls back"; the caller
+        (06's iter_steps) is the one that catches this and substitutes
+        `care_plan` unmodified (PRD 05 §4.8: correct is non-fatal)."""
+        if not corrections:
+            return care_plan
+
+        prompt = _CORRECT_PROMPT.format(
+            corrections_block=_format_corrections_for_prompt(corrections),
+            style_rules=_STYLE_RULES,
+            care_plan_block=json.dumps(care_plan.model_dump(mode="json"), indent=2),
+            schema=_ASSEMBLE_SCHEMA,   # correct() returns a full CarePlan, same shape as assemble's output (PRD 04 §4.3)
+        )
+        raw = self._generate_json(
+            prompt,
+            temperature=Constants.Llm.TEMPERATURE_JSON,
+            max_tokens=Constants.Llm.MAX_TOKENS_LONG_FORM,
+        )
+        if not isinstance(raw, dict):
+            raise SimplifyError(ErrorCode.LLM_INVALID_JSON, detail=f"expected dict, got {type(raw)}")
+        try:
+            corrected = CarePlan.model_validate(raw)
+        except ValidationError as e:
+            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
+
+        _verify_correction_diff(care_plan, corrected, corrections)   # raises on violation
+        return corrected
 
     def iter_steps(
         self,
