@@ -140,6 +140,14 @@ def test_pipeline_marker_has_source_kind_and_grading_enabled(_clean_sink):
 
     pipeline_events = [e for e in sink.events if e["name"] == "care_plan.pipeline"]
     assert pipeline_events, "No care_plan.pipeline event found"
+    emitted_names = {event["name"] for event in sink.events}
+    assert {
+        "care_plan.find_medical_terms",
+        "care_plan.ground",
+        "care_plan.assemble_and_render",
+        "care_plan.review",
+        "care_plan.correct",
+    } <= emitted_names
     dims = pipeline_events[0]["dimensions"]
     assert dims.get("source_kind") == "upload", f"Expected source_kind='upload', got {dims.get('source_kind')!r}"
     assert dims.get("grading_enabled") is True, f"Expected grading_enabled=True, got {dims.get('grading_enabled')!r}"
@@ -269,4 +277,3 @@ def test_grading_run_marker_not_fired_when_grading_disabled(_clean_sink):
     grading_events = [e for e in sink.events if e["name"] == "grading.run"]
     assert not grading_events, \
         f"grading.run marker fired unexpectedly when grading_enabled=False: {grading_events}"
-

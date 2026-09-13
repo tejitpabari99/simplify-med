@@ -34,6 +34,8 @@ class FakePipeline:
         for step in (2, 3, 4, 5):
             yield StepEvent(step=step, status="active", label=f"Step {step}")
             yield StepEvent(step=step, status="done", label=f"Step {step}")
+        yield StepEvent(step=6, status="active", label="Correct")
+        yield StepEvent(step=6, status="done", label="Correct")
         yield _make_run_result(text)
 
 
@@ -61,11 +63,12 @@ def test_run_care_plan_pipeline_yields_typed_step_events():
         events = list(run_care_plan_pipeline("plain note", [], metrics, grading_enabled=False))
 
     step_events = [e for e in events if isinstance(e, AdapterStepEvent)]
-    assert [(e.step, e.status) for e in step_events] == [
-        (2, "active"), (2, "done"),
-        (3, "active"), (3, "done"),
-        (4, "active"), (4, "done"),
-        (5, "active"), (5, "done"),
+    assert [(e.step, e.status, e.label) for e in step_events] == [
+        (2, "active", "Step 2"), (2, "done", "Step 2"),
+        (3, "active", "Step 3"), (3, "done", "Step 3"),
+        (4, "active", "Step 4"), (4, "done", "Step 4"),
+        (5, "active", "Step 5"), (5, "done", "Step 5"),
+        (6, "active", "Correct"), (6, "done", "Correct"),
     ]
 
 

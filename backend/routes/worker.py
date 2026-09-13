@@ -239,7 +239,7 @@ def execute_job(job_id: str):
                     ]
 
             complete_job(job_id, output_data, name)
-            logger.info("worker: job %s completed", job_id, extra={"job_id": job_id, "uid": uid, "stage": 5})
+            logger.info("worker: job %s completed", job_id, extra={"job_id": job_id, "uid": uid, "stage": 6})
             return "", 200
 
         except Exception as exc:
