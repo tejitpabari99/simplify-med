@@ -67,6 +67,7 @@ export function buildPdfHtml(result: SimplifiedCarePlan, grading?: Grading, opti
         <span style="font-size:11px;color:#6B7280;">${escapeHtml(NEXT_STEPS_TYPE_LABELS[row.type])}</span>
         ${row.why ? `<br><span style="color:#1D4ED8;font-size:13px;">Why: ${escapeHtml(row.why)}</span>` : ''}
         ${row.detail ? `<br><span style="color:#374151;font-size:13px;">${escapeHtml(row.detail)}</span>` : ''}
+        ${row.change ? `<br><span style="color:#D97706;font-size:13px;font-weight:700;">Changed: ${escapeHtml(row.change)}</span>` : ''}
         ${stepsHtml}
       </div>`;
     }).join('');

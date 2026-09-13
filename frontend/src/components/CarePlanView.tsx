@@ -209,6 +209,11 @@ export default function CarePlanView({
                       </div>
                       {row.why && <p style={{ color: '#1D4ED8', fontSize: '0.875rem', margin: '4px 0 0 0' }}>Why: {withTerms(row.why)}</p>}
                       {row.detail && <p style={{ color: '#374151', fontSize: '0.875rem', margin: '4px 0 0 0' }}>{withTerms(row.detail)}</p>}
+                      {row.change && (
+                        <p style={{ color: '#D97706', fontSize: '0.8rem', fontWeight: '700', margin: '4px 0 0 0' }}>
+                          Changed: {withTerms(row.change)}
+                        </p>
+                      )}
                       {(row.steps?.length ?? 0) > 0 && (
                         <ul className="result-list" style={{ marginTop: '4px' }}>
                           {row.steps?.map((step, si) => <li key={si}>{withTerms(step)}</li>)}

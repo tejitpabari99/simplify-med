@@ -110,4 +110,31 @@ describe('buildNextStepsRows', () => {
     expect(rows[0].steps).toEqual(['Sit quietly.', 'Write it down.']);
     expect(rows[0].detail).toBe('Do this daily');
   });
+
+  it('medication row carries change through from Medication.change', () => {
+    const carePlan = baseCarePlan({
+      medications: [medication({ change: 'This medicine was started today.' })],
+    });
+    const rows = buildNextStepsRows(carePlan);
+    expect(rows[0].change).toBe('This medicine was started today.');
+  });
+
+  it('medication row has an empty change when Medication.change is empty', () => {
+    const carePlan = baseCarePlan({
+      medications: [medication({ change: '' })],
+    });
+    const rows = buildNextStepsRows(carePlan);
+    expect(rows[0].change).toBe('');
+  });
+
+  it('non-medication rows never populate change', () => {
+    const carePlan = baseCarePlan({
+      tests: [testItem()],
+      procedures: [procedure()],
+      other: [other()],
+      follow_up: [followUp()],
+    });
+    const rows = buildNextStepsRows(carePlan);
+    expect(rows.every(r => !r.change)).toBe(true);
+  });
 });

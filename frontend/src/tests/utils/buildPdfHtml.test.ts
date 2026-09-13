@@ -98,4 +98,21 @@ describe('buildPdfHtml', () => {
     const html = buildPdfHtml(carePlan);
     expect(html).not.toContain('Next Steps');
   });
+
+  it('renders a medication\'s change note in the Next Steps section, HTML-escaped', () => {
+    const carePlan = baseCarePlan({
+      medications: [{ title: 'Lisinopril', change: 'Dose <increased> & "adjusted"', status: 'to_do' }],
+    });
+    const html = buildPdfHtml(carePlan);
+    expect(html).toContain('Changed: Dose &lt;increased&gt; &amp; &quot;adjusted&quot;');
+    expect(html).not.toContain('Dose <increased>');
+  });
+
+  it('omits the change line when Medication.change is empty', () => {
+    const carePlan = baseCarePlan({
+      medications: [{ title: 'Lisinopril', change: '', status: 'to_do' }],
+    });
+    const html = buildPdfHtml(carePlan);
+    expect(html).not.toContain('Changed:');
+  });
 });

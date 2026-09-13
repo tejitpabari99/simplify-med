@@ -31,6 +31,7 @@ export interface NextStepRow {
   why?: string;
   detail?: string;   // one-line, type-specific detail (see field mapping below)
   steps?: string[];  // OtherInstruction only; a short sub-list, not folded into `detail`
+  change?: string | null;  // Medication only; null/undefined for every other row type
 }
 
 // One join helper for every type's "one-line detail" -- filters empties,
@@ -52,6 +53,7 @@ export function buildNextStepsRows(carePlan: CarePlanContent): NextStepRow[] {
     ...carePlan.medications.map((m): NextStepRow => ({
       type: 'medication', status: m.status, title: withTitle(m), why: m.why,
       detail: joinDetail(m.dosage, m.frequency, m.timing, m.duration),
+      change: m.change,
     })),
     ...carePlan.tests.map((t): NextStepRow => ({
       type: 'test', status: t.status, title: withTitle(t), why: t.why,

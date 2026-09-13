@@ -99,6 +99,26 @@ describe('CarePlanView', () => {
     expect(signalAOuterDiv.style.borderLeft).toContain('rgb(156, 163, 175)');
   });
 
+  it('renders a medication\'s change note in the Next Steps row', () => {
+    const carePlan: SimplifiedCarePlan = {
+      summary: '', summary_fact_ids: [], reason_for_visit: [], diagnosis: { details: [] },
+      medications: [{ title: 'Lisinopril', change: 'This medicine was started today.', status: 'to_do' }],
+      tests: [], procedures: [], other: [], follow_up: [], warning_signs: [], questions: [], low_priority: [],
+    };
+    render(<CarePlanView result={carePlan} />);
+    expect(screen.getByText(/This medicine was started today\./)).toBeInTheDocument();
+  });
+
+  it('does not render a change line when Medication.change is empty', () => {
+    const carePlan: SimplifiedCarePlan = {
+      summary: '', summary_fact_ids: [], reason_for_visit: [], diagnosis: { details: [] },
+      medications: [{ title: 'Lisinopril', change: '', status: 'to_do' }],
+      tests: [], procedures: [], other: [], follow_up: [], warning_signs: [], questions: [], low_priority: [],
+    };
+    render(<CarePlanView result={carePlan} />);
+    expect(screen.queryByText(/^Changed:/)).not.toBeInTheDocument();
+  });
+
   it('never drops a null-urgency warning sign from the list', () => {
     const carePlan: SimplifiedCarePlan = {
       summary: '', summary_fact_ids: [], reason_for_visit: [], diagnosis: { details: [] },
