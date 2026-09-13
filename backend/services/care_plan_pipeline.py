@@ -14,7 +14,9 @@ from typing import Generator
 from flask import g
 
 from care_plan.pipeline import CarePlanPipeline
+from models.ledger import Unit
 from utils.scoring import score_text_safe
+from utils.term_detection import render_care_plan_text
 from models.metrics import Metrics
 from models.grading import Grading, build_grading_with_before_after_score
 from utils.markers import Markers, SimplifyContext
@@ -35,6 +37,7 @@ logger = logging.getLogger(__name__)
 # ── Pipeline adapter ───────────────────────────────────────────────────────────
 def run_care_plan_pipeline(
     text: str,
+    units: list[Unit],
     metrics: Metrics,
     grading_enabled: bool,
     source_kind: str = "upload",
@@ -57,10 +60,11 @@ def run_care_plan_pipeline(
             return
 
         _STEP_MARKER_MAP = {
-            2: (Markers.CarePlan.FindMedicalTerms, "find_medical_terms", None),
-            3: (Markers.CarePlan.SimplifyLanguage, "simplify_language", "care_plan.simplify_language"),
-            4: (Markers.CarePlan.ClarifyActions,   "clarify_actions",   "care_plan.clarify_actions"),
-            5: (Markers.CarePlan.StructureNote,    "structure_note",    "care_plan.structure_note"),
+            2: (Markers.CarePlan.FindMedicalTerms,   "find_medical_terms",  None),
+            3: (Markers.CarePlan.Ground,             "ground",              "care_plan.ground"),
+            4: (Markers.CarePlan.AssembleAndRender,  "assemble_and_render", "care_plan.assemble_and_render"),
+            5: (Markers.CarePlan.Review,             "review",              "care_plan.review"),
+            6: (Markers.CarePlan.Correct,            "correct",             "care_plan.correct"),
         }
 
         def wrap_step(step: int, label: str, fn):
@@ -90,7 +94,7 @@ def run_care_plan_pipeline(
 
             return marker.execute(_inner)
 
-        for event in pipeline.iter_steps(text, wrap_step=wrap_step):
+        for event in pipeline.iter_steps(text, units, wrap_step=wrap_step):
             if isinstance(event, StepEvent):
                 yield AdapterStepEvent(
                     step=event.step, status=event.status, label=event.label
@@ -102,12 +106,13 @@ def run_care_plan_pipeline(
 
             elif isinstance(event, PipelineRunResult):
                 if grading_enabled:
-                    before_score = before_score_future.result()
-                    after_score  = score_text_safe(event.clarified, "after")
+                    before_score  = before_score_future.result()
+                    rendered_text = render_care_plan_text(event.care_plan)      # NEW — replaces event.clarified
+                    after_score   = score_text_safe(rendered_text, "after")
 
                     def _grade(scope):
                         SimplifyContext.from_g(function="grading").apply(scope)
-                        result = build_grading_with_before_after_score(before_score, text, after_score, event.clarified)
+                        result = build_grading_with_before_after_score(before_score, text, after_score, rendered_text)
                         scope.add("before_composite", (before_score or {}).get("composite", 0.0))
                         scope.add("after_composite",  (after_score  or {}).get("composite", 0.0))
                         scope.add("grading_method_count", len({e.name for e in result.entries if e.name != "combined"}))
@@ -128,7 +133,6 @@ def run_care_plan_pipeline(
                     care_plan=event.care_plan,
                     grading=grading,
                     raw_text=event.raw_text,
-                    clarified_text=event.clarified,
                 )
 
     except Exception as exc:
