@@ -334,20 +334,21 @@ def _log_thin_fields(model: CarePlan) -> None:
     principle protects. "Not stated in your note." (25 chars) always clears
     the length rule on its own, so the sentinel is never flagged here."""
     for field, attr in _RICHNESS_CHECKS:
-        for item in getattr(model, field):
+        for index, item in enumerate(getattr(model, field)):
             value = getattr(item, attr, "")
             if value and not _is_informative_quote(value):
                 logger.warning(
-                    "assemble_and_render: thin %s.%s field (%r) -- below "
-                    "the content-richness floor; not corrected or dropped, "
-                    "logged for prompt-quality review", field, attr, value,
+                    "assemble_and_render: thin %s[%d].%s field (length=%d) -- "
+                    "below the content-richness floor; not corrected or "
+                    "dropped, logged for prompt-quality review",
+                    field, index, attr, len(value),
                 )
-    for detail in model.diagnosis.details:
+    for index, detail in enumerate(model.diagnosis.details):
         if detail.description and not _is_informative_quote(detail.description):
             logger.warning(
-                "assemble_and_render: thin diagnosis.details[].description "
-                "field (%r) -- below the content-richness floor",
-                detail.description,
+                "assemble_and_render: thin diagnosis.details[%d].description "
+                "field (length=%d) -- below the content-richness floor",
+                index, len(detail.description),
             )
 
 

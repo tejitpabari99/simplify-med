@@ -307,6 +307,25 @@ def test_verify_assembly_logs_warning_for_thin_why_field(caplog):
     assert result.medications[0].why == "for BP"
 
 
+def test_verify_assembly_thin_field_log_never_contains_clinical_text(caplog):
+    """PHI/PHI-adjacent guard: _log_thin_fields must log only the field path
+    and value length, never the raw patient-facing text itself."""
+    thin_text = "for BP only"
+    model = CarePlan(medications=[_make_item("medications", [1], why=thin_text)])
+    facts = [Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1, text="a")]
+
+    with caplog.at_level(logging.WARNING):
+        _verify_assembly(model, facts)
+
+    assert any("thin" in record.message for record in caplog.records)
+    for record in caplog.records:
+        assert thin_text not in record.message
+        assert repr(thin_text) not in record.message
+    # The field path (with index) and value length should be present instead.
+    assert any("medications[0].why" in record.message for record in caplog.records)
+    assert any(str(len(thin_text)) in record.message for record in caplog.records)
+
+
 def test_verify_assembly_does_not_flag_not_stated_sentinel_as_thin(caplog):
     model = CarePlan(
         medications=[_make_item("medications", [1], why="Not stated in your note.")]
