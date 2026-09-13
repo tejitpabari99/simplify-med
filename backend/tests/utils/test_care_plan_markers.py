@@ -79,8 +79,6 @@ def _make_pipeline_stub():
                 "preserve_and_define_terms": [],
                 "abbreviations": [],
             },
-            simplified="simplified text",
-            clarified="clarified text",
             raw_text=text,
         )
 

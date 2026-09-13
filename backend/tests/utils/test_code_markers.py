@@ -21,9 +21,10 @@ def test_marker_names():
     expected = {
         Markers.CarePlan.ReadInput: "care_plan.read_input",
         Markers.CarePlan.FindMedicalTerms: "care_plan.find_medical_terms",
-        Markers.CarePlan.SimplifyLanguage: "care_plan.simplify_language",
-        Markers.CarePlan.ClarifyActions: "care_plan.clarify_actions",
-        Markers.CarePlan.StructureNote: "care_plan.structure_note",
+        Markers.CarePlan.Ground: "care_plan.ground",
+        Markers.CarePlan.AssembleAndRender: "care_plan.assemble_and_render",
+        Markers.CarePlan.Review: "care_plan.review",
+        Markers.CarePlan.Correct: "care_plan.correct",
         Markers.CarePlan.SaveOutput: "care_plan.save_output",
         Markers.CarePlan.Pipeline: "care_plan.pipeline",
         Markers.Grading.Run: "grading.run",
@@ -31,6 +32,9 @@ def test_marker_names():
     }
     for cls, name in expected.items():
         assert cls.name() == name, f"Expected {cls!r}.name() == {name!r}"
+    assert not hasattr(Markers.CarePlan, "SimplifyLanguage")
+    assert not hasattr(Markers.CarePlan, "ClarifyActions")
+    assert not hasattr(Markers.CarePlan, "StructureNote")
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +42,7 @@ def test_marker_names():
 # ---------------------------------------------------------------------------
 def test_execute_returns_value():
     register_sink(None)  # disable emission so we get a clean test
-    result = Markers.CarePlan.SimplifyLanguage.execute(lambda s: 42)
+    result = Markers.CarePlan.Ground.execute(lambda s: 42)
     assert result == 42
 
 
@@ -49,10 +53,10 @@ def test_execute_emits_to_sink():
     sink = InMemorySink()
     register_sink(sink)
     try:
-        Markers.CarePlan.SimplifyLanguage.execute(lambda s: None)
+        Markers.CarePlan.Ground.execute(lambda s: None)
         assert len(sink.events) == 1
         event = sink.events[0]
-        assert event["name"] == "care_plan.simplify_language"
+        assert event["name"] == "care_plan.ground"
         assert event["success"] is True
         assert event["duration_ms"] >= 0
     finally:
@@ -67,7 +71,7 @@ def test_execute_failure_path():
     register_sink(sink)
     try:
         with pytest.raises(ValueError):
-            Markers.CarePlan.SimplifyLanguage.execute(
+            Markers.CarePlan.Ground.execute(
                 lambda s: (_ for _ in ()).throw(ValueError("boom"))
             )
         assert len(sink.events) == 1

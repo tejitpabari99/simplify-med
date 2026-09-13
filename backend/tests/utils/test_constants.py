@@ -73,12 +73,24 @@ def test_env_vars_namespace():
 
 def test_pipeline_steps_enum():
     steps = Constants.Pipeline.PIPELINE_STEPS
+    assert [m.name for m in steps] == [
+        "READ_NOTE", "DETECT_TERMS", "GROUND", "ASSEMBLE_AND_RENDER", "REVIEW", "CORRECT",
+    ]
+    assert steps.READ_NOTE.number == 1
+    assert steps.READ_NOTE.label == "Reading your note"
     assert steps.DETECT_TERMS.number == 2
     assert steps.DETECT_TERMS.label == "Finding difficult and medical terms"
-    assert steps.READ_NOTE.number == 1
-    assert steps.SIMPLIFY_LANGUAGE.number == 3
-    assert steps.CLARIFY_AND_ACTION.number == 4
-    assert steps.STRUCTURE_DOCUMENT.number == 5
+    assert steps.GROUND.number == 3
+    assert steps.GROUND.label == "Finding the facts in your note"
+    assert steps.ASSEMBLE_AND_RENDER.number == 4
+    assert steps.ASSEMBLE_AND_RENDER.label == "Putting your care plan together"
+    assert steps.REVIEW.number == 5
+    assert steps.REVIEW.label == "Double-checking your care plan"
+    assert steps.CORRECT.number == 6
+    assert steps.CORRECT.label == "Finishing touches"
+    assert not hasattr(steps, "SIMPLIFY_LANGUAGE")
+    assert not hasattr(steps, "CLARIFY_AND_ACTION")
+    assert not hasattr(steps, "STRUCTURE_DOCUMENT")
 
 
 def test_pipeline_version_constants():
