@@ -18,9 +18,10 @@ def test_pipeline_is_flattened_to_a_single_non_versioned_module():
     assert "SimplifyPipeline" not in pipeline_source
 
     prompts_dir = BACKEND_DIR / "care_plan" / "prompts"
-    assert (prompts_dir / "simplify_language.txt").is_file()
-    assert (prompts_dir / "clarify_and_action.txt").is_file()
-    assert (prompts_dir / "structure_note.txt").is_file()
+    assert not (prompts_dir / "simplify_language.txt").exists()
+    assert not (prompts_dir / "clarify_and_action.txt").exists()
+    assert not (prompts_dir / "structure_note.txt").exists()
+    assert (prompts_dir / "assemble_and_render.txt").is_file()
 
 
 def test_old_simplify_folder_is_gone():
