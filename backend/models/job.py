@@ -52,7 +52,6 @@ class JobDoc(JsonModel):
     grading_enabled: bool = False
 
     # ── Single-job-only extras ────────────────────────────────────────────
-    shared: Optional[bool] = None
     trace_id: Optional[str] = None
 
     # ── Expiry ────────────────────────────────────────────────────────────
@@ -91,7 +90,6 @@ class JobDoc(JsonModel):
             created_at=now,
             updated_at=now,
             status=StatusEnum.not_started,
-            shared=False,
             trace_id=trace_id,
             expires_at=expires_at,
             **input_fields,
