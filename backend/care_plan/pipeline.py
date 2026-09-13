@@ -110,12 +110,18 @@ def _is_verbatim_quote(quote: str, unit_text: str) -> bool:
     """Deterministic check (D1): is `quote` a substring of `unit_text`,
     tolerant of whitespace/case/accent noise from OCR (PRD 03 §4.5)? Reuses
     utils.text_normalization.normalize_text (already used for term-detection
-    matching) rather than inventing a second normalization scheme. A blank
-    or whitespace-only quote never counts as a match -- "" is trivially a
-    substring of everything in Python, but carries no evidence."""
-    if not quote.strip():
+    matching) rather than inventing a second normalization scheme. A quote
+    whose NORMALIZED form is empty never counts as a match -- "" is
+    trivially a substring of everything in Python, but carries no evidence.
+    This is checked against the normalized form, not merely the raw form
+    (a raw whitespace-only quote isn't the only way to get there): a quote
+    made entirely of characters normalize_text strips (symbols, CJK,
+    Cyrillic, etc.) is non-blank but still normalizes to "", and would
+    otherwise pass this check vacuously."""
+    normalized_quote = normalize_text(quote)
+    if not normalized_quote:
         return False
-    return normalize_text(quote) in normalize_text(unit_text)
+    return normalized_quote in normalize_text(unit_text)
 
 
 # Quote informativeness floor (D2, PRD 03 §9 -- resolves the prior [OPEN]
@@ -197,9 +203,22 @@ def _locate_quote_offsets(quote: str, unit_text: str) -> tuple[int, int]:
     can only happen if `normalize_with_offsets` and `normalize_text` have
     drifted out of sync (see below for why that's structurally prevented,
     not just hoped for), since `_is_verbatim_quote` already proved the
-    normalized quote is a substring of `normalize_text(unit_text)`."""
+    normalized quote is a substring of `normalize_text(unit_text)`. Also
+    raises `AssertionError` if the normalized quote is empty -- `str.find`
+    on an empty needle always returns 0 regardless of content, which would
+    make `char_end` resolve to `spans[-1][1]` (the LAST span, not "one
+    before a zero-length match") and silently return the entire unit's
+    span; `_is_verbatim_quote` must already have rejected an empty-
+    normalized quote before this function is ever called, so reaching this
+    branch means that contract was violated."""
     normalized_unit, spans = normalize_with_offsets(unit_text)
     normalized_quote = normalize_text(quote)
+    if not normalized_quote:
+        raise AssertionError(
+            "_locate_quote_offsets called with a quote that normalizes to "
+            "the empty string -- caller must reject via _is_verbatim_quote "
+            "before calling this function"
+        )
     idx = normalized_unit.find(normalized_quote)
     if idx == -1:
         raise AssertionError(

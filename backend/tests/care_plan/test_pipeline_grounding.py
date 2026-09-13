@@ -129,6 +129,26 @@ def test_is_verbatim_quote_rejects_blank_quote():
     assert _is_verbatim_quote("   ", unit_text) is False
 
 
+def test_is_verbatim_quote_rejects_quote_that_normalizes_to_empty():
+    # Non-blank raw quotes (quote.strip() is truthy) that normalize_text
+    # nonetheless reduces to "" -- normalize_text in x is vacuously True
+    # for any x, so these must be rejected against the NORMALIZED form,
+    # not merely the raw/whitespace form (review-2026-09-13.md, Blocking #1).
+    unit_text = "Patient has hypertension and continues lisinopril"
+
+    plus_minus_quote = "±" * 12
+    assert normalize_text(plus_minus_quote) == ""
+    assert _is_verbatim_quote(plus_minus_quote, unit_text) is False
+
+    symbol_quote = "©§×÷" * 3  # (c)(section)(x)(div) x3
+    assert normalize_text(symbol_quote) == ""
+    assert _is_verbatim_quote(symbol_quote, unit_text) is False
+
+    cjk_quote = "中文の" * 4  # CJK, well over the length floor
+    assert normalize_text(cjk_quote) == ""
+    assert _is_verbatim_quote(cjk_quote, unit_text) is False
+
+
 # ---------------------------------------------------------------------------
 # Quote informativeness floor tests (D2)
 # ---------------------------------------------------------------------------
@@ -373,6 +393,64 @@ def test_verify_ledger_preserves_order_of_surviving_facts():
         "Continue metoprolol 25mg.",
         "Take warfarin 5mg daily.",
     ]
+
+
+def test_verify_ledger_drops_fact_whose_quote_normalizes_to_empty():
+    # Regression for review-2026-09-13.md Blocking #1: a quote made of
+    # characters normalize_text strips entirely (here, plus-minus signs)
+    # must not survive to become a Fact -- and, before the fix, the
+    # fabricated fact's offsets resolved to (0, len(unit_text)), i.e. the
+    # ENTIRE unit, because normalize_text(quote) == "" is vacuously a
+    # substring of everything.
+    unit_text = "Patient has hypertension and continues lisinopril"
+    units = [
+        Unit(id=1, file="note.pdf", page=1, line=1, text=unit_text),
+    ]
+    drafts = [
+        _GroundedFactRaw(
+            category="medications", unit_id=1, quote="lisinopril",
+            text="Continue lisinopril.",
+        ),
+        _GroundedFactRaw(
+            category="medications", unit_id=1, quote="±" * 12,
+            text="FABRICATED: patient takes unicorn tears 500mg twice daily",
+        ),
+    ]
+
+    facts = _verify_ledger(drafts, units)
+
+    assert len(facts) == 1
+    assert facts[0].text == "Continue lisinopril."
+    assert not any(
+        fact.char_start == 0 and fact.char_end == len(unit_text)
+        for fact in facts
+    )
+
+
+def test_verify_ledger_drops_quote_normalizing_to_empty_against_empty_unit():
+    # Regression for review-2026-09-13.md Blocking #1's second manifestation:
+    # when the cited unit's text is empty/all-whitespace, `spans` from
+    # normalize_with_offsets is [], so before the fix
+    # _locate_quote_offsets(quote, "") raised an unhandled IndexError
+    # instead of _verify_ledger cleanly dropping the draft.
+    units = [
+        Unit(id=1, file="note.pdf", page=1, line=1, text=""),
+        Unit(id=2, file="note.pdf", page=1, line=2, text="   "),
+    ]
+    drafts = [
+        _GroundedFactRaw(
+            category="medications", unit_id=1, quote="±" * 12,
+            text="FABRICATED against empty unit",
+        ),
+        _GroundedFactRaw(
+            category="medications", unit_id=2, quote="±" * 12,
+            text="FABRICATED against whitespace-only unit",
+        ),
+    ]
+
+    facts = _verify_ledger(drafts, units)
+
+    assert facts == []
 
 
 # ---------------------------------------------------------------------------
