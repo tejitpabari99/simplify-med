@@ -3,7 +3,7 @@
 Parent brief: `docs/agent_files/2026-09-09-docs-fidelity-concision-brief/brainstorm.v1.md` (approved; not re-litigated here).
 Branch: `docs/fidelity-concision-brief`.
 Depends on: 01 (`backend/models/care_plan/care_plan.py` — owns the `source_fact_ids` shape this PRD extends; `backend/models/ledger.py` — `FactCategory`, unchanged, read only), 04 (`backend/care_plan/pipeline.py` — owns `_verify_assembly`, `_ITEM_LIST_FIELDS`, `_log_thin_fields`, and `backend/care_plan/prompts/assemble_and_render.txt`, all extended here), 05 (review/correct — `_resolve_path`, `_diff_item`, `review.txt`, `correct.txt`; read to confirm no code change is required there), 06 (`backend/routes/worker.py` — owns `_strip_internal_provenance`, extended here), 13 (edits the same two files this PRD edits — `care_plan.py` and `assemble_and_render.txt` — for an unrelated field, `why`; seam stated in §4.8), 14 (rejected `merged: bool` as an unverifiable model self-report; its reasoning is the template this PRD follows for rejecting a similar self-report field for `low_priority`, §4.6).
-Depended on by: none identified in 15/16/17 as of this writing (grepped for `reason_for_visit`/`DiagnosisDetail`/`diagnosis.details`, zero hits — those PRDs may not yet exist as files). Any future PRD that adds a new `CarePlan` field must satisfy the regression test this PRD adds (§7.5).
+Depended on by: none identified in 15/16/17 as of this writing (grepped for `reason_for_visit`/`DiagnosisDetail`/`diagnosis.details`, zero hits — those PRDs may not yet exist as files). Any future PRD that adds a new `CarePlan` field must satisfy the regression test this PRD adds (§7.5). Soft dependency, the other direction: PRD 14 (merge-provenance) relies on the free `len(source_fact_ids) > 1` signal to make merges findable in logs, but recorded that signal as structurally unavailable for diagnosis-category merges (its own §9 `[OPEN]`, since resolved) because `DiagnosisDetail` carried no `source_fact_ids`. This PRD's §4.2 addition closes that gap as a side effect — 14 does not block on 18 landing, but 14's diagnosis-merge observability arrives only once 18 does.
 
 ## 1. Problem
 
@@ -315,6 +315,8 @@ No externally-visible change. `summary_fact_ids` and `source_fact_ids` (on all e
 | `diagnosis.changed_since_last_visit_fact_ids` | absent | added; populated whenever `changed_since_last_visit` is non-empty; the string is cleared to `""` if left uncited (§4.3) — **stripped**, never present externally |
 
 No route signature, HTTP status, or error shape changes. `CarePlanContent`'s wire shape (what the frontend actually receives) is unchanged by this PRD.
+
+**Downstream effect on PRD 14, noted for the record.** The two new per-item `source_fact_ids` fields (`ReasonForVisit`, `DiagnosisDetail`) also feed PRD 14's `merge_candidate_signal` log-only aggregate (its §4.4) for free — once this PRD lands, a diagnosis-category item citing more than one fact starts counting toward that aggregate the same way the six previously-covered item types already do. This PRD does not implement or alter `merge_candidate_signal` itself; the effect is a side benefit of closing the citation-existence gap for its own, unrelated reason.
 
 ## 6. Frontend Change Summary
 
