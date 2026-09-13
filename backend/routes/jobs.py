@@ -23,6 +23,7 @@ from utils.constants import Constants
 from services.care_plan_input import (
     resolve_uploaded_files,
     upload_combined_pdf,
+    upload_job_input,
     validate_extracted_text_length,
 )
 from services.unitizer import provenance_for_pasted_text
@@ -43,12 +44,13 @@ def _resolve_job_input(user_id: str) -> dict:
         # Enforces the char cap, the UTF-8 byte cap (Finding 1), and rejects
         # unstorable text such as a lone UTF-16 surrogate (Finding 5).
         validate_extracted_text_length(text_input)
+        provenance = provenance_for_pasted_text(text_input)
+        input_payload_gcs_uri = upload_job_input(text_input, provenance, user_id)
         return {
             "input_source_kind": "text",
-            "input_text": text_input,
+            "input_payload_gcs_uri": input_payload_gcs_uri,
             "input_source_filename": "text_input",
             "input_pdf_gcs_uri": None,
-            "input_provenance": provenance_for_pasted_text(text_input),
             "input_version": Constants.Pipeline.PIPELINE_VERSION,
             "grading_enabled": True,
         }
@@ -71,12 +73,12 @@ def _resolve_job_input(user_id: str) -> dict:
         tolerate_unusable_files=True,
     )
     pdf_gcs_uri = upload_combined_pdf(raw_pdf_bytes, user_id) if raw_pdf_bytes else None
+    input_payload_gcs_uri = upload_job_input(resolved.text, resolved.provenance, user_id)
     return {
         "input_source_kind": "upload",
-        "input_text": resolved.text,
+        "input_payload_gcs_uri": input_payload_gcs_uri,
         "input_source_filename": resolved.source_filename,
         "input_pdf_gcs_uri": pdf_gcs_uri,
-        "input_provenance": resolved.provenance,
         "input_version": Constants.Pipeline.PIPELINE_VERSION,
         "grading_enabled": True,
         # Surface which files (if any) were tolerated-skipped as unusable
