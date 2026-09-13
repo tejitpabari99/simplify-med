@@ -174,6 +174,9 @@ def delete_job(job_id: str, user_id: str):
             gcs_uri = data.get("input_pdf_gcs_uri")
             if gcs_uri:
                 delete_gcs_object(gcs_uri)  # best-effort; logs+swallows, never raises
+            payload_gcs_uri = data.get("input_payload_gcs_uri")
+            if payload_gcs_uri:
+                delete_gcs_object(payload_gcs_uri)  # best-effort; same as above
 
             ref.delete()
             return "", 204

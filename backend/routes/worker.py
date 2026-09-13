@@ -252,7 +252,10 @@ def execute_job(job_id: str):
                 pass
             return "", 500
         finally:
-            if job is not None and job.input_pdf_gcs_uri:
-                delete_gcs_object(job.input_pdf_gcs_uri)
+            if job is not None:
+                if job.input_pdf_gcs_uri:
+                    delete_gcs_object(job.input_pdf_gcs_uri)
+                if job.input_payload_gcs_uri:
+                    delete_gcs_object(job.input_payload_gcs_uri)
 
     return Markers.Worker.JobExecute.execute(_run)

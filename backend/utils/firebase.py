@@ -230,15 +230,9 @@ def update_job_stage(job_id: str, stage: int) -> None:
 
 
 def complete_job(job_id: str, output_data: dict, name: str) -> None:
-    """Mark a job completed. Always deletes the top-level input_text and
-    input_provenance fields in the SAME update -- the raw pasted/extracted document text is write-once
-    (by create_job_doc) and read-once (by resolve_input_from_job_doc at
-    worker start), never needed again after this point. This is a *separate*
-    field from output_data["input"]["text"] (already popped by the caller,
-    see routes/worker.py) -- without also clearing this one, the full-length
-    top-level copy survives untouched for the entire job TTL, undermining
-    the "stay under 1 MiB" intent and compounding the byte-vs-char cap bug
-    (edge-case review Finding 4)."""
+    """Mark a job completed. Raw input lives in GCS at input_payload_gcs_uri,
+    not on the job document, and is cleaned by routes/worker.py's finally
+    block and DELETE /jobs/<job_id>, not here."""
     try:
         now = datetime.now(timezone.utc)
         db = firestore_client()
@@ -249,8 +243,6 @@ def complete_job(job_id: str, output_data: dict, name: str) -> None:
             "name": name,
             "completed_at": now,
             "updated_at": now,
-            "input_text": firestore.DELETE_FIELD,
-            "input_provenance": firestore.DELETE_FIELD,
         }
         db.collection("care_plan_outputs").document(job_id).update(update_fields)
     except Exception as exc:
@@ -259,10 +251,9 @@ def complete_job(job_id: str, output_data: dict, name: str) -> None:
 
 
 def fail_job(job_id: str, error_data: dict) -> None:
-    """Mark a job failed. Always clears input_text and input_provenance --
-    see complete_job's docstring; applies equally on the failure path since
-    the raw text is no longer needed once the job has reached ANY terminal
-    state."""
+    """Mark a job failed. Raw input lives in GCS at input_payload_gcs_uri,
+    not on the job document, and is cleaned by routes/worker.py's finally
+    block and DELETE /jobs/<job_id>, not here."""
     try:
         now = datetime.now(timezone.utc)
         db = firestore_client()
@@ -271,8 +262,6 @@ def fail_job(job_id: str, error_data: dict) -> None:
             "error_data": error_data,
             "completed_at": now,
             "updated_at": now,
-            "input_text": firestore.DELETE_FIELD,
-            "input_provenance": firestore.DELETE_FIELD,
         }
         db.collection("care_plan_outputs").document(job_id).update(update_fields)
     except Exception as exc:
