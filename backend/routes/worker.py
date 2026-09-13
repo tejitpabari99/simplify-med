@@ -15,7 +15,8 @@ from utils.firebase import (
     verify_oidc_token,
 )
 from services.care_plan_pipeline import run_care_plan_pipeline
-from services.care_plan_input import resolve_input_from_job_doc, resolve_units_from_job_doc
+from services.care_plan_input import load_job_input
+from services.unitizer import unitize
 from models.pipeline_events import AdapterStepEvent, AdapterResult, AdapterError
 from models.care_plan.envelope import CarePlanInternal
 from models.job import JobDoc
@@ -26,7 +27,7 @@ from utils.misc import derive_output_name
 from utils.markers import Markers, SimplifyContext
 from utils.job_helpers import canonical_input_type
 from utils.gcs import delete_gcs_object
-from errors import ErrorCode, build_error_data, build_error_data_from_exc
+from errors import ErrorCode, SimplifyError, build_error_data, build_error_data_from_exc
 
 logger = logging.getLogger(__name__)
 worker_bp = Blueprint("worker", __name__)
@@ -137,8 +138,12 @@ def execute_job(job_id: str):
                 return False
 
             source_kind = job.input_source_kind
-            text = resolve_input_from_job_doc(job)
-            units = resolve_units_from_job_doc(job)
+            try:
+                text, provenance = load_job_input(job)
+            except SimplifyError as exc:
+                fail_job(job_id, build_error_data(exc.error_code, exc.detail))
+                return "", 200
+            units = unitize(text, provenance)
 
             # Defensive floor (belt-and-suspenders alongside the per-file check
             # in services.care_plan_input.resolve_uploaded_files): reject not
