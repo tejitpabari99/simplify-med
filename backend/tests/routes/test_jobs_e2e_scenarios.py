@@ -255,7 +255,14 @@ def _build_care_plan(size: str = "typical"):
         CarePlan, ReasonForVisit, Diagnosis, DiagnosisDetail, Medication,
         Test, Procedure, FollowUp, WarningSign, GlossaryTerm,
     )
-    n = 6 if size == "typical" else 14
+    if size == "typical":
+        n = 6
+    else:
+        # Keep Scenario 4 a meaningful Firestore document-budget regression:
+        # after RawArtifacts removal, its former 14-item dense profile was
+        # only 16,219 bytes (<2% of 1 MiB). Many structured items exercise
+        # serialization pressure without creating an oversized leaf field.
+        n = 750
     meds = [
         Medication(
             title=f"Medication {i}", plain_name=f"Drug name {i}",
@@ -353,7 +360,7 @@ def _build_grading():
 def _fake_pipeline_factory(care_plan, grading):
     calls = {"count": 0}
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="upload", is_batch=False):
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="upload", is_batch=False):
         calls["count"] += 1
         yield AdapterStepEvent(step=2, status="active", label="Terms")
         yield AdapterStepEvent(step=2, status="done", label="Terms")
@@ -363,7 +370,9 @@ def _fake_pipeline_factory(care_plan, grading):
         yield AdapterStepEvent(step=4, status="done", label="Clarify")
         yield AdapterStepEvent(step=5, status="active", label="Structure")
         yield AdapterStepEvent(step=5, status="done", label="Structure")
-        yield AdapterResult(care_plan=care_plan, grading=grading, raw_text=text, clarified_text=text)
+        yield AdapterStepEvent(step=6, status="active", label="Correct")
+        yield AdapterStepEvent(step=6, status="done", label="Correct")
+        yield AdapterResult(care_plan=care_plan, grading=grading, raw_text=text)
 
     fake_pipeline.calls = calls
     return fake_pipeline
@@ -481,6 +490,7 @@ class TestScenario1TypicalDischargeSummary:
 
         size = _doc_size_bytes(doc)
         assert size < 1_048_576, f"completed doc is {size} bytes, over Firestore's 1 MiB limit"
+        assert doc.get("stage") in (None, *range(1, 7))
         # Report this concrete number (see scenario-validation report).
         print(f"\n[scenario 1] completed doc size: {size} bytes")
 
@@ -699,6 +709,7 @@ class TestScenario4MultibyteNearLimits:
 
         size = _doc_size_bytes(doc)
         assert size < 1_048_576, f"completed doc is {size} bytes"
+        assert doc.get("stage") in (None, *range(1, 7))
         print(f"\n[scenario 4] completed doc size (dense output + near-max multibyte input, "
               f"input cleared before persist): {size} bytes")
 
@@ -965,11 +976,11 @@ class TestScenario8LifecycleRaces:
         care_plan = _build_care_plan("typical")
         grading = _build_grading()
 
-        def racing_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
+        def racing_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
             # Simulate the user's DELETE landing exactly while the worker is
             # mid-pipeline (between get_job_doc and complete_job).
             fake_db.collection("care_plan_outputs").document(job_id).delete()
-            yield AdapterResult(care_plan=care_plan, grading=grading, raw_text=text, clarified_text=text)
+            yield AdapterResult(care_plan=care_plan, grading=grading, raw_text=text)
 
         with patch("routes.worker.delete_gcs_object") as mock_delete_gcs:
             with patch("routes.worker.run_care_plan_pipeline", racing_pipeline):
@@ -1069,7 +1080,7 @@ class TestScenario9FailureSurfaces:
 
         with patch("care_plan.pipeline.CarePlanPipeline.__init__", return_value=None):
             with patch(
-                "care_plan.pipeline.CarePlanPipeline._generate_text",
+                "care_plan.pipeline.CarePlanPipeline._generate_json",
                 side_effect=gexc.ResourceExhausted("quota exceeded"),
             ):
                 resp = _run_worker(client_worker, job_id)
@@ -1086,7 +1097,7 @@ class TestScenario9FailureSurfaces:
 
         with patch("care_plan.pipeline.CarePlanPipeline.__init__", return_value=None):
             with patch(
-                "care_plan.pipeline.CarePlanPipeline._generate_text",
+                "care_plan.pipeline.CarePlanPipeline._generate_json",
                 side_effect=gexc.DeadlineExceeded("deadline exceeded"),
             ):
                 resp = _run_worker(client_worker, job_id)
