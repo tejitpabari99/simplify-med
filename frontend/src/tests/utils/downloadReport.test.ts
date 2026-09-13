@@ -65,16 +65,16 @@ describe('downloadReport', () => {
     expect(trackEventMock).toHaveBeenCalledWith({ name: 'report_downloaded', params: {} });
   });
 
-  it('omits the Medical Terms Glossary, Readability, and Other Items sections from the downloaded report', () => {
+  it('includes the Medical Terms Glossary, Readability, and Other Items sections in the downloaded report', () => {
     const fakeWindow = { document: { write: vi.fn(), close: vi.fn() }, print: vi.fn() };
     vi.spyOn(window, 'open').mockReturnValue(fakeWindow as unknown as Window);
 
     downloadReport(fixture, grading);
 
     const html = fakeWindow.document.write.mock.calls[0][0] as string;
-    expect(html).not.toContain('Medical Terms Glossary');
-    expect(html).not.toContain('Readability');
-    expect(html).not.toContain('Other Items');
+    expect(html).toContain('Medical Terms Glossary');
+    expect(html).toContain('Readability');
+    expect(html).toContain('Other Items');
     // Sanity check: the rest of the report is still present.
     expect(html).toContain('Take it easy for a week.');
   });
