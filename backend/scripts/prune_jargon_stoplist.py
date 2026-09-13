@@ -19,14 +19,25 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "jargon"
 def _branches(term: str) -> list[str]:
     return [p.strip().lower() for p in term.split(",")]
 
+def _normalize_stoplist(stoplist: set[str]) -> set[str]:
+    # A stoplist entry may itself be a comma-list ("foot, feet"); split it into
+    # bare branches the same way a dictionary term is split, so a record like
+    # "foot, feet" can match branch-for-branch against the stoplist instead of
+    # only ever comparing against the literal, unsplit stoplist string.
+    normalized: set[str] = set()
+    for entry in stoplist:
+        normalized.update(_branches(entry))
+    return normalized
+
 def prune(dictionary: list[dict], stoplist: set[str]) -> tuple[list[dict], list[dict]]:
+    normalized_stoplist = _normalize_stoplist(stoplist)
     kept, dropped = [], []
     for record in dictionary:
         term = record["term"]
         if "(" in term:
             kept.append(record)
             continue
-        if all(branch in stoplist for branch in _branches(term)):
+        if all(branch in normalized_stoplist for branch in _branches(term)):
             dropped.append(record)
         else:
             kept.append(record)
