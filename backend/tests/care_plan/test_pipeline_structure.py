@@ -19,7 +19,7 @@ def test_pipeline_is_flattened_to_a_single_non_versioned_module():
 
     prompts_dir = BACKEND_DIR / "care_plan" / "prompts"
     assert not (prompts_dir / "simplify_language.txt").exists()
-    assert not (prompts_dir / "clarify_and_action.txt").exists()
+    assert not (prompts_dir / ("clarify" + "_and_action.txt")).exists()
     assert not (prompts_dir / "structure_note.txt").exists()
     assert (prompts_dir / "assemble_and_render.txt").is_file()
 

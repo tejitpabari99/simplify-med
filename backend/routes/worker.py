@@ -214,8 +214,8 @@ def execute_job(job_id: str):
             name = derive_output_name(output_data.get("care_plan", {}), job.input_source_filename)
             output_data["metrics"]["saved_id"] = job_id
 
-            # Jobs are short-lived and the UI never reads raw text/simplified_text/
-            # clarified_text, internal fact-ID provenance, nor the original input text —
+            # Jobs are short-lived and the UI never reads raw text, derived
+            # full-document fields, internal fact-ID provenance, nor the original input text —
             # drop those fields so completed docs stay well
             # under Firestore's 1 MiB doc limit and don't risk the ~1500-byte auto-indexed
             # field limit on these full-document-length strings. `input.text` is popped

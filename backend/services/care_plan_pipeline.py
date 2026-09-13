@@ -107,7 +107,7 @@ def run_care_plan_pipeline(
             elif isinstance(event, PipelineRunResult):
                 if grading_enabled:
                     before_score  = before_score_future.result()
-                    rendered_text = render_care_plan_text(event.care_plan)      # NEW — replaces event.clarified
+                    rendered_text = render_care_plan_text(event.care_plan)
                     after_score   = score_text_safe(rendered_text, "after")
 
                     def _grade(scope):

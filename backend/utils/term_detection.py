@@ -97,8 +97,8 @@ def render_care_plan_text(care_plan: "CarePlan") -> str:
 
     Two consumers: (1) build_glossary_from_care_plan below, re-detecting
     against the FINAL corrected output (brief §3.7); (2) 06's "after"
-    readability score, replacing event.clarified once the prose stages are
-    deleted (brief §2.5; the gap PRD 04 §9 flags, closed here).
+    readability score over that final rendered output (brief §2.5; the gap
+    PRD 04 §9 flags, closed here).
 
     Excludes: doc_type/version (schema plumbing), status/severity/urgency
     (typed enums, not free text), note (internal, zero frontend consumers),

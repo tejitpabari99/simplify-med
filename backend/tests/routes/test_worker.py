@@ -415,7 +415,7 @@ def test_job_without_pdf_upload_never_triggers_gcs_cleanup(
 _RAW_TEXT_FIXTURE = {
     "text": "full document text " * 50,
     "simplified_text": "simplified document text " * 50,
-    "clarified_text": "clarified document text " * 50,
+    "post_processed_text": "post-processed document text " * 50,
 }
 
 
@@ -429,9 +429,7 @@ def test_job_completed_output_has_no_raw(
     mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
     mock_delete_gcs, client_worker,
 ):
-    """Jobs must not persist care_plan.raw (text/simplified_text/
-    clarified_text each hold a full copy of the document) in the completed
-    job's output_data."""
+    """Jobs must not persist care_plan.raw's full-document copies in output_data."""
     mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
     mock_fs_client.return_value = MagicMock()
 

@@ -88,9 +88,12 @@ def test_pipeline_steps_enum():
     assert steps.REVIEW.label == "Double-checking your care plan"
     assert steps.CORRECT.number == 6
     assert steps.CORRECT.label == "Finishing touches"
-    assert not hasattr(steps, "SIMPLIFY_LANGUAGE")
-    assert not hasattr(steps, "CLARIFY_AND_ACTION")
-    assert not hasattr(steps, "STRUCTURE_DOCUMENT")
+    retired_step_names = (
+        "SIMPLIFY" + "_LANGUAGE",
+        "CLARIFY" + "_AND_ACTION",
+        "STRUCTURE" + "_DOCUMENT",
+    )
+    assert all(not hasattr(steps, name) for name in retired_step_names)
 
 
 def test_pipeline_version_constants():

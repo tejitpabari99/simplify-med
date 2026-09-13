@@ -39,7 +39,7 @@ from models.ledger import Fact, FactCategory, Unit
 from models.review import Correction, CoverageEntry, ReviewResult
 from utils.llm import LLMClient
 from utils.term_detection import (
-    build_glossary_from_care_plan,      # 07 — replaces build_glossary_from_simplified_text
+    build_glossary_from_care_plan,      # 07 — re-detect terms from the final care plan
     curate_glossary_terms,               # 07
     detect_terms,
     format_abbreviations_for_prompt,
@@ -659,8 +659,7 @@ class CarePlanPipeline:
         Long-form token budget: grounding output size scales with the
         number of facts in the whole document (potentially the largest
         single LLM output in the pipeline, now that it runs before any
-        content is dropped or condensed), same reasoning as
-        structure_appointment_note's use of MAX_TOKENS_LONG_FORM.
+        content is dropped or condensed), so it uses MAX_TOKENS_LONG_FORM.
         """
         abbrev_block = format_abbreviations_for_prompt(abbreviations)
         units_block = _format_units_for_prompt(units)
@@ -706,10 +705,8 @@ class CarePlanPipeline:
     ) -> CarePlan:
         """Assembly + render: the single LLM call that maps the verified
         fact ledger into a typed CarePlan, splitting and plain-language-
-        rendering each field (brief §2.5, §3.4). Replaces
-        simplify_language_with_term_plan + clarify_and_action +
-        structure_appointment_note -- no whole-document rewrite exists
-        anywhere in the pipeline after this PRD lands.
+        rendering each field (brief §2.5, §3.4). It replaces the former
+        multi-stage whole-document rewriting flow.
 
         Raises SimplifyError on any unrecoverable failure -- this method
         does not catch its own exceptions; iter_steps' fatal-step wrapping
