@@ -351,6 +351,55 @@ class CarePlanPipeline:
 
         return model.model_dump(mode="json", exclude={"terms", "raw"})
 
+    def ground(self, units: list[Unit], abbreviations: list[dict]) -> list[Fact]:
+        """Grounding: the LLM call that extracts an evidence-linked ledger of
+        atomic facts from the deterministic unit list, before any rewriting
+        or structuring happens (brief §2.5, §3.3). Raises SimplifyError on
+        any unrecoverable failure -- this method does not catch its own
+        exceptions; iter_steps' fatal-step wrapping is 06's to wire (PRD 03
+        §4.5).
+
+        Long-form token budget: grounding output size scales with the
+        number of facts in the whole document (potentially the largest
+        single LLM output in the pipeline, now that it runs before any
+        content is dropped or condensed), same reasoning as
+        structure_appointment_note's use of MAX_TOKENS_LONG_FORM.
+        """
+        abbrev_block = format_abbreviations_for_prompt(abbreviations)
+        units_block = _format_units_for_prompt(units)
+        prompt = _GROUND_PROMPT.format(
+            schema=_GROUNDING_SCHEMA,
+            abbrev_block=abbrev_block,
+            units_block=units_block,
+        )
+        raw = self._generate_json(
+            prompt,
+            temperature=Constants.Llm.TEMPERATURE_JSON,
+            max_tokens=Constants.Llm.MAX_TOKENS_LONG_FORM,
+        )
+        if not isinstance(raw, list):
+            raise SimplifyError(ErrorCode.LLM_INVALID_JSON, detail=f"expected list, got {type(raw)}")
+
+        drafts: list[_GroundedFactRaw] = []
+        for idx, item in enumerate(raw, start=1):
+            if not isinstance(item, dict):
+                raise SimplifyError(
+                    ErrorCode.PIPELINE_VALIDATION_FAILED,
+                    detail=f"grounding item {idx} is not a JSON object",
+                )
+            try:
+                drafts.append(_GroundedFactRaw.model_validate(item))
+            except ValidationError as e:
+                raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
+
+        verified = _verify_ledger(drafts, units)
+        if not verified:
+            raise SimplifyError(
+                ErrorCode.PIPELINE_VALIDATION_FAILED,
+                detail="grounding produced zero verifiable facts",
+            )
+        return verified
+
     def iter_steps(
         self,
         text: str,
