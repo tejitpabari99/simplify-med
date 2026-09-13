@@ -277,6 +277,32 @@ def _verify_ledger(drafts: list[_GroundedFactRaw], units: list[Unit]) -> list[Fa
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 _GROUND_PROMPT    = (_PROMPTS_DIR / "ground.txt").read_text(encoding="utf-8")
+_ASSEMBLE_PROMPT = (_PROMPTS_DIR / "assemble_and_render.txt").read_text(encoding="utf-8")
+
+_ASSEMBLE_SCHEMA = json.dumps(
+    _llm_schema(CarePlan, exclude={"terms", "note"}),
+    indent=2,
+)
+
+_FACT_CATEGORY_ORDER = (
+    "reason_for_visit", "diagnosis", "medications", "tests",
+    "procedures", "other", "follow_up", "warning_signs",
+)
+
+
+def _format_facts_for_prompt(facts: list[Fact]) -> str:
+    """Render the ledger as the assembly prompt's fact list, grouped by
+    category in the same fixed order as the MAPPING table in the prompt
+    (PRD 04 §4.1), so the model sees its own checklist already partially
+    applied -- mirrors _format_units_for_prompt's grouping (PRD 03 §4.3)."""
+    by_category: dict[str, list[Fact]] = {}
+    for fact in facts:
+        by_category.setdefault(fact.category, []).append(fact)
+    lines: list[str] = []
+    for category in _FACT_CATEGORY_ORDER:
+        for fact in by_category.get(category, []):
+            lines.append(f"[{fact.id}] {category}: {fact.text}")
+    return "\n".join(lines)
 
 
 class CarePlanPipeline:
