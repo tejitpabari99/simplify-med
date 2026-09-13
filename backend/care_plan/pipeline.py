@@ -29,7 +29,9 @@ from models.pipeline_events import (
 
 WrapStepFn = Callable[[int, str, Callable[[], Any]], Any]
 
+from models.base import JsonModel
 from models.care_plan import CarePlan
+from models.ledger import Fact, FactCategory, Unit
 from utils.llm import LLMClient
 from utils.term_detection import (
     build_glossary_from_simplified_text,
@@ -39,6 +41,7 @@ from utils.term_detection import (
     format_substitution_candidates_for_prompt,
 )
 from utils.constants import Constants
+from utils.text_normalization import normalize_text, normalize_with_offsets
 from errors import SimplifyError, ErrorCode
 
 _STEP = Constants.Pipeline.PIPELINE_STEPS
@@ -62,11 +65,34 @@ _STRUCTURING_SCHEMA = json.dumps(
     indent=2,
 )
 
+
+class _GroundedFactRaw(JsonModel):
+    """Shape of one array element straight from the grounding LLM, before
+    its quote is verified and converted to char_start/char_end offsets.
+    Never constructed from anything but raw LLM JSON, never returned from
+    ground(), never passed to 04 or 05 -- purely an intermediate parsing
+    target local to this module (PRD 03 §4.2/§9). Its four fields are
+    exactly Fact's LLM-facing fields; Fact itself additionally carries
+    `id` (assigned by code, §4.4) and `char_start`/`char_end` (computed
+    by code from `quote`, §4.3) in place of `quote`."""
+
+    category: FactCategory
+    unit_id: int
+    quote: str
+    text: str
+
+
+_GROUNDING_SCHEMA = json.dumps(
+    {"type": "array", "items": _llm_schema(_GroundedFactRaw, exclude=set())},
+    indent=2,
+)
+
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 _SIMPLIFY_PROMPT  = (_PROMPTS_DIR / "simplify_language.txt").read_text(encoding="utf-8")
 _CLARIFY_PROMPT   = (_PROMPTS_DIR / "clarify_and_action.txt").read_text(encoding="utf-8")
 _STRUCTURE_PROMPT = (_PROMPTS_DIR / "structure_note.txt").read_text(encoding="utf-8")
+_GROUND_PROMPT    = (_PROMPTS_DIR / "ground.txt").read_text(encoding="utf-8")
 
 
 class CarePlanPipeline:
