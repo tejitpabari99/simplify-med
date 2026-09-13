@@ -2,8 +2,8 @@
 care_plan/pipeline.py - The care_plan pipeline.
 
 Deterministic term detection (AHRQ + Michigan + abbreviations) via JSON,
-followed by three LLM steps that simplify, clarify, and structure the note
-into a typed CarePlan.
+followed by one grounding step that extracts evidence-linked facts and one
+assembly step that renders them into a typed CarePlan.
 
 Steps:
   1. detect_terms
@@ -37,8 +37,6 @@ from utils.term_detection import (
     build_glossary_from_simplified_text,
     detect_terms,
     format_abbreviations_for_prompt,
-    format_medical_terms_for_prompt,
-    format_substitution_candidates_for_prompt,
 )
 from utils.constants import Constants
 from utils.text_normalization import normalize_text, normalize_with_offsets
@@ -58,12 +56,6 @@ def _llm_schema(model_cls, exclude: set[str]) -> dict:
     if "required" in schema:
         schema["required"] = [r for r in schema["required"] if r not in exclude]
     return schema
-
-
-_STRUCTURING_SCHEMA = json.dumps(
-    _llm_schema(CarePlan, exclude={"terms", "raw", "note"}),
-    indent=2,
-)
 
 
 class _GroundedFactRaw(JsonModel):
@@ -284,9 +276,6 @@ def _verify_ledger(drafts: list[_GroundedFactRaw], units: list[Unit]) -> list[Fa
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-_SIMPLIFY_PROMPT  = (_PROMPTS_DIR / "simplify_language.txt").read_text(encoding="utf-8")
-_CLARIFY_PROMPT   = (_PROMPTS_DIR / "clarify_and_action.txt").read_text(encoding="utf-8")
-_STRUCTURE_PROMPT = (_PROMPTS_DIR / "structure_note.txt").read_text(encoding="utf-8")
 _GROUND_PROMPT    = (_PROMPTS_DIR / "ground.txt").read_text(encoding="utf-8")
 
 
@@ -313,62 +302,6 @@ class CarePlanPipeline:
     ) -> dict | list:
         # Delegate to shared LLM client (includes fence-stripping and JSON parsing).
         return self._llm.generate_json(prompt, temperature=temperature, max_tokens=max_tokens)
-
-    def simplify_language_with_term_plan(
-        self,
-        text: str,
-        substitution_candidates: list[dict],
-        preserve_and_define_terms: list[dict],
-        abbreviations: list[dict],
-    ) -> str:
-        # Pre-format deterministic term detections into compact prompt sections.
-        sub_block = format_substitution_candidates_for_prompt(substitution_candidates)
-        medical_block = format_medical_terms_for_prompt(preserve_and_define_terms)
-        abbrev_block = format_abbreviations_for_prompt(abbreviations)
-
-        prompt = _SIMPLIFY_PROMPT.format(
-            sub_block=sub_block,
-            medical_block=medical_block,
-            abbrev_block=abbrev_block,
-            text=text,
-        )
-        return self._generate_text(prompt, temperature=Constants.Llm.TEMPERATURE_TEXT, max_tokens=Constants.Llm.MAX_TOKENS_LONG_FORM)
-
-    def clarify_and_action(self, text: str, abbreviations: list[dict] | None = None) -> str:
-        abbreviation_section = ""
-        if abbreviations:
-            abbrev_list = "\n".join(
-                f"- \"{a['term']}\" -> \"{a['expansion']}\""
-                for a in abbreviations[:30]
-            )
-            abbreviation_section = (
-                f"\nIf any of these abbreviations remain in the text, expand them:\n{abbrev_list}\n"
-            )
-        prompt = _CLARIFY_PROMPT.format(
-            abbreviation_section=abbreviation_section,
-            text=text,
-        )
-        return self._generate_text(prompt, temperature=Constants.Llm.TEMPERATURE_JSON, max_tokens=Constants.Llm.MAX_TOKENS_LONG_FORM)
-
-    def structure_appointment_note(self, text: str) -> dict:
-        # Long-form budget: this step emits the full structured care-plan JSON
-        # (medications, tests, warning signs, etc. for the whole document), which
-        # can easily exceed the default 8192-token cap on anything longer than a
-        # short note. It is also the LAST LLM step, so hitting the cap here means
-        # every earlier step already ran to completion before the user sees a
-        # failure — use the same long-form budget as the other prose-generating
-        # steps so a merely-longer (not actually huge) document doesn't fail late.
-        prompt = _STRUCTURE_PROMPT.format(schema=_STRUCTURING_SCHEMA, text=text)
-        raw = self._generate_json(prompt, temperature=Constants.Llm.TEMPERATURE_JSON, max_tokens=Constants.Llm.MAX_TOKENS_LONG_FORM)
-        if not isinstance(raw, dict):
-            raise SimplifyError(ErrorCode.LLM_INVALID_JSON, detail=f"expected dict, got {type(raw)}")
-
-        try:
-            model = CarePlan.model_validate(raw)
-        except ValidationError as e:
-            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
-
-        return model.model_dump(mode="json", exclude={"terms", "raw"})
 
     def ground(self, units: list[Unit], abbreviations: list[dict]) -> list[Fact]:
         """Grounding: the LLM call that extracts an evidence-linked ledger of
