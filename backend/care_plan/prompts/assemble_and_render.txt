@@ -33,15 +33,7 @@ LOW PRIORITY -- after mapping, move an item into low_priority (as one short line
 
 QUESTIONS -- write at most three questions a patient might reasonably ask their care team about this visit. Write none if the facts already answer everything a reader would ask -- there is no minimum. Interrogative form only. A question must not assert or presuppose any clinical fact, diagnosis, or judgement that is not already stated in the facts above; it may only ask about a genuine gap or next step.
 
-PII -- replace every person's name and every facility's name with a generic form: a clinician's name becomes "your doctor" (or "your surgeon" / "your cardiologist" / etc. if the fact itself names that specialty); a hospital or clinic name becomes "the hospital" or "the clinic." Example: "Doctor Alok Singh" becomes "your doctor." This is the one case where you do not preserve a fact's exact wording -- a generic form loses the patient no clinical information. The patient's own name, date of birth, address, and insurance details must never appear either.
-
-LANGUAGE RULES -- apply to every field you write:
-- Active voice. Address the patient as "you."
-- One idea per sentence. Keep sentences under about 20 words.
-- Expand every abbreviation. Never print "BID", "HTN", "f/u", or similar -- use the plain words.
-- Never invent a number, and never convert vague wording ("a few weeks") into an exact one ("3 weeks") unless a fact states the exact number.
-- Never add urgency, prognosis, or medical advice beyond what a fact states.
-- Start every patient action (in medications, tests, procedures, other, follow_up) with a clear verb: Take / Call / Schedule / Ask / Bring / Watch / Avoid / Continue / Stop.
+{style_rules}
 - Use these plain-language swaps where they fit naturally; do not force one that reads unnaturally:
 {sub_block}
 - Keep these medical terms exactly as written. Do NOT define them inline -- they are explained separately in the app's glossary:
