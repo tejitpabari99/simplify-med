@@ -63,13 +63,18 @@ class Constants:
         class PIPELINE_STEPS(Enum):
             """Named steps of the care-plan pipeline. Each member carries its
             1-based step number (`.number`) and its user-facing progress label
-            (`.label`); replaces the old bare `dict[int, str]` so call sites
-            reference named members instead of int literals."""
-            READ_NOTE          = (1, "Reading your note")
-            DETECT_TERMS       = (2, "Finding difficult and medical terms")
-            SIMPLIFY_LANGUAGE  = (3, "Simplifying language")
-            CLARIFY_AND_ACTION = (4, "Clarifying actions and numbers")
-            STRUCTURE_DOCUMENT = (5, "Organizing your care plan")
+            (`.label`). Six members now, not five: the inverted pipeline (brief
+            §2.5, §3.1) runs four sequential LLM calls (ground, assemble_and_render,
+            review, correct) instead of three (simplify, clarify, structure).
+            Labels are patient-facing progress copy — never name an internal
+            concept ("grounding", "ledger", "citation check") the patient has no
+            reason to see."""
+            READ_NOTE           = (1, "Reading your note")
+            DETECT_TERMS        = (2, "Finding difficult and medical terms")
+            GROUND              = (3, "Finding the facts in your note")
+            ASSEMBLE_AND_RENDER = (4, "Putting your care plan together")
+            REVIEW              = (5, "Double-checking your care plan")
+            CORRECT             = (6, "Finishing touches")
 
             def __new__(cls, number: int, label: str):
                 obj = object.__new__(cls)
@@ -101,6 +106,7 @@ class Constants:
     class Deadlines:
         SINGLE_JOB_INTERNAL_DEADLINE_S: int = 270
         JOB_TIMEOUT_SECONDS_SINGLE: int = 300
+        GLOSSARY_CURATION_TIMEOUT_S: int = 20
 
     class Llm:
         MODEL_DEFAULT: str = "gemini-1.5-pro"
