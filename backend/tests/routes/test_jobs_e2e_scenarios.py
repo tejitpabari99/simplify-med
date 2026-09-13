@@ -253,7 +253,7 @@ def _build_care_plan(size: str = "typical"):
     envelope.to_dict() serialization in the worker is genuine, not mocked."""
     from models.care_plan.care_plan import (
         CarePlan, ReasonForVisit, Diagnosis, DiagnosisDetail, Medication,
-        Test, Procedure, FollowUp, WarningSign, GlossaryTerm, RawArtifacts,
+        Test, Procedure, FollowUp, WarningSign, GlossaryTerm,
     )
     n = 6 if size == "typical" else 14
     meds = [
@@ -264,7 +264,7 @@ def _build_care_plan(size: str = "typical"):
             duration="Ongoing, until your next visit",
             instructions="Take with a full glass of water. Do not skip doses.",
             side_effects_to_watch="Dizziness, dry cough, swelling of the lips or face, rash.",
-            importance="high",
+            status="to_do",
         )
         for i in range(n)
     ]
@@ -274,7 +274,7 @@ def _build_care_plan(size: str = "typical"):
             why="Checks how well your kidneys and liver are working on this medication.",
             description="A simple blood draw performed at any lab.",
             preparation="No fasting required.",
-            importance="low",
+            status="to_do",
         )
         for i in range(max(2, n // 2))
     ]
@@ -284,7 +284,7 @@ def _build_care_plan(size: str = "typical"):
             why="Needed to monitor your recovery.",
             what_to_expect="A short outpatient visit, usually under an hour.",
             timeframe="Within 2 weeks",
-            importance="low",
+            status="done",
         )
         for i in range(max(1, n // 4))
     ]
@@ -295,7 +295,6 @@ def _build_care_plan(size: str = "typical"):
             what_to_do="Call 911 or go to the nearest emergency room immediately.",
             urgency="emergency",
             related_to="medication",
-            importance="high",
         )
         for i in range(max(2, n // 3))
     ]
@@ -306,14 +305,12 @@ def _build_care_plan(size: str = "typical"):
         )
         for i in range(n * 2)
     }
-    raw = RawArtifacts(text="x" * 3000, simplified_text="y" * 3000, clarified_text="z" * 3000)
     return CarePlan(
         summary="Overview of your visit and what to do next.",
         reason_for_visit=[
             ReasonForVisit(reason="Follow-up visit", description="Routine follow-up for chronic condition management.")
         ],
         diagnosis=Diagnosis(
-            main_conclusion="Your blood pressure remains elevated and needs medication adjustment.",
             changed_since_last_visit="Dosage increased since last visit.",
             details=[
                 DiagnosisDetail(
@@ -325,12 +322,11 @@ def _build_care_plan(size: str = "typical"):
             ],
         ),
         medications=meds, tests=tests, procedures=procedures,
-        other=[], follow_up=[FollowUp(time_frame="2 weeks", description="Return for a blood pressure check.")],
+        other=[], follow_up=[FollowUp(time_frame="2 weeks", description="Return for a blood pressure check.", status="to_do")],
         warning_signs=warnings,
         questions=["Should I avoid salty foods?", "When can I resume exercise?"],
         low_priority=[],
         terms=terms,
-        raw=raw,
     )
 
 
@@ -1276,15 +1272,12 @@ class TestScenario11AccessControl:
 
             allow get:  resource == null
                         || (request.auth != null && request.auth.uid == resource.data.uid)
-                        || resource.data.shared == true
             allow list: request.auth != null && request.auth.uid == resource.data.uid
             allow write: if false
 
-        Since `shared` is hard-coded `false` at creation for every job
-        (JobDoc.for_single) and no code path ever flips it, an
-        anonymous user B's token (uid != resource.data.uid) fails BOTH the
-        uid check and the shared check for user A's doc, so `get`/`list`
-        are denied; `write` is unconditionally denied to every client
+        An anonymous user B's token (uid != resource.data.uid) fails the
+        uid check for user A's doc, so `get`/`list` are denied; `write` is
+        unconditionally denied to every client
         (server-side Admin SDK writes via utils/firebase.py bypass rules
         entirely, which is how the app itself writes). This matches the
         route-level behavior asserted above. Flagged as NOT independently
