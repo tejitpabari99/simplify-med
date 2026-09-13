@@ -102,3 +102,33 @@ def test_maybe_downscale_returns_unchanged_for_small_image():
 def test_maybe_downscale_returns_original_on_decode_error():
     corrupted = b"this is not a valid image"
     assert _maybe_downscale(corrupted, "png") == corrupted
+
+
+def test_max_long_edge_is_4096():
+    from utils.image_ocr import _MAX_LONG_EDGE_PX
+    assert _MAX_LONG_EDGE_PX == 4096
+
+
+def test_maybe_downscale_leaves_image_between_old_and_new_ceiling_unchanged():
+    # a ~3000px-long-edge image: under the new 4096 ceiling, _maybe_downscale
+    # must return it unchanged (regression-proof the ceiling actually moved --
+    # under the OLD 2048 ceiling this image would have been downscaled)
+    img = PIL.Image.new("RGB", (3000, 100), color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    original_bytes = buf.getvalue()
+
+    assert _maybe_downscale(original_bytes, "png") == original_bytes
+
+
+def test_maybe_downscale_still_downscales_image_over_new_ceiling():
+    # an image over 4096px long edge is thumbnailed to <= 4096
+    img = PIL.Image.new("RGB", (5000, 100), color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    original_bytes = buf.getvalue()
+
+    result = _maybe_downscale(original_bytes, "png")
+
+    result_img = PIL.Image.open(io.BytesIO(result))
+    assert max(result_img.size) <= 4096
