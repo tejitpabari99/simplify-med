@@ -37,6 +37,8 @@ from utils.term_detection import (
     build_glossary_from_simplified_text,
     detect_terms,
     format_abbreviations_for_prompt,
+    format_medical_terms_for_prompt,
+    format_substitution_candidates_for_prompt,
 )
 from utils.constants import Constants
 from utils.text_normalization import normalize_text, normalize_with_offsets
@@ -305,6 +307,105 @@ def _format_facts_for_prompt(facts: list[Fact]) -> str:
     return "\n".join(lines)
 
 
+_ITEM_LIST_FIELDS = ("medications", "tests", "procedures", "other", "follow_up", "warning_signs")
+
+# Content-richness floor (PRD 04 §9, resolving the prior [DEFERRED] item) --
+# reuses 03's _is_informative_quote / _QUOTE_MIN_LENGTH /
+# _QUOTE_LONG_WORD_MIN_LENGTH (PRD 03 §4.3) verbatim. Both already live in
+# this same module (backend/care_plan/pipeline.py), so this is a same-file
+# call, not an import -- 04 does not define a parallel set of constants.
+_RICHNESS_CHECKS: tuple[tuple[str, str], ...] = (
+    ("reason_for_visit", "description"),
+    ("medications", "why"),
+    ("tests", "why"),
+    ("tests", "description"),
+    ("procedures", "why"),
+    ("other", "why"),
+    ("other", "description"),
+)
+
+
+def _log_thin_fields(model: CarePlan) -> None:
+    """Logs (never mutates or drops) a why/description field that fails
+    03's _is_informative_quote floor (PRD 04 §9). Observability only: unlike
+    NOT STATED, there is no fallback value to substitute for a field the
+    model DID fill in, and dropping an otherwise-backed item over one thin
+    field would remove genuine content the brief's "remove nothing"
+    principle protects. "Not stated in your note." (25 chars) always clears
+    the length rule on its own, so the sentinel is never flagged here."""
+    for field, attr in _RICHNESS_CHECKS:
+        for item in getattr(model, field):
+            value = getattr(item, attr, "")
+            if value and not _is_informative_quote(value):
+                logger.warning(
+                    "assemble_and_render: thin %s.%s field (%r) -- below "
+                    "the content-richness floor; not corrected or dropped, "
+                    "logged for prompt-quality review", field, attr, value,
+                )
+    for detail in model.diagnosis.details:
+        if detail.description and not _is_informative_quote(detail.description):
+            logger.warning(
+                "assemble_and_render: thin diagnosis.details[].description "
+                "field (%r) -- below the content-richness floor",
+                detail.description,
+            )
+
+
+def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
+    """Three deterministic, LLM-free guards on the assembled CarePlan (PRD 04
+    §4.5), plus one LLM-free observability pass (content-richness, above).
+    None of the three guards is fatal -- each corrects, filters, or drops in
+    place and logs, matching 03's drop-and-continue policy for a fact that
+    fails a per-item check (PRD 03 §4.5): a model deviation on one field, or
+    one unbacked item, is not a reason to fail the whole step."""
+    _log_thin_fields(model)
+    updates: dict = {}
+
+    if len(model.questions) > 3:
+        logger.warning(
+            "assemble_and_render: truncating %d questions to 3", len(model.questions)
+        )
+        updates["questions"] = model.questions[:3]
+
+    valid_ids = {fact.id for fact in facts}
+
+    bad_summary_ids = [i for i in model.summary_fact_ids if i not in valid_ids]
+    if bad_summary_ids:
+        logger.warning(
+            "assemble_and_render: dropping summary_fact_ids not present in the "
+            "ledger: %s", bad_summary_ids,
+        )
+        updates["summary_fact_ids"] = [i for i in model.summary_fact_ids if i in valid_ids]
+
+    for field in _ITEM_LIST_FIELDS:
+        items = getattr(model, field)
+        kept = []
+        changed = False
+        for item in items:
+            cited = [i for i in item.source_fact_ids if i in valid_ids]
+            if not cited:
+                logger.warning(
+                    "assemble_and_render: dropping unbacked %s item -- "
+                    "source_fact_ids=%r cited nothing in the ledger",
+                    field, item.source_fact_ids,
+                )
+                changed = True
+                continue
+            if len(cited) != len(item.source_fact_ids):
+                logger.warning(
+                    "assemble_and_render: dropping hallucinated source_fact_ids "
+                    "on a %s item: %s", field,
+                    [i for i in item.source_fact_ids if i not in valid_ids],
+                )
+                item = item.model_copy(update={"source_fact_ids": cited})
+                changed = True
+            kept.append(item)
+        if changed:
+            updates[field] = kept
+
+    return model.model_copy(update=updates) if updates else model
+
+
 class CarePlanPipeline:
     """Care plan pipeline with deterministic term detection."""
 
@@ -377,6 +478,52 @@ class CarePlanPipeline:
                 detail="grounding produced zero verifiable facts",
             )
         return verified
+
+    def assemble_and_render(
+        self,
+        facts: list[Fact],
+        substitution_candidates: list[dict],
+        preserve_and_define_terms: list[dict],
+        abbreviations: list[dict],
+    ) -> CarePlan:
+        """Assembly + render: the single LLM call that maps the verified
+        fact ledger into a typed CarePlan, splitting and plain-language-
+        rendering each field (brief §2.5, §3.4). Replaces
+        simplify_language_with_term_plan + clarify_and_action +
+        structure_appointment_note -- no whole-document rewrite exists
+        anywhere in the pipeline after this PRD lands.
+
+        Raises SimplifyError on any unrecoverable failure -- this method
+        does not catch its own exceptions; iter_steps' fatal-step wrapping
+        is 06's to wire (PRD 04 §4.5).
+        """
+        if not facts:
+            raise SimplifyError(
+                ErrorCode.PIPELINE_VALIDATION_FAILED,
+                detail="assemble_and_render received an empty fact ledger",
+            )
+
+        prompt = _ASSEMBLE_PROMPT.format(
+            schema=_ASSEMBLE_SCHEMA,
+            facts_block=_format_facts_for_prompt(facts),
+            sub_block=format_substitution_candidates_for_prompt(substitution_candidates),
+            medical_block=format_medical_terms_for_prompt(preserve_and_define_terms),
+            abbrev_block=format_abbreviations_for_prompt(abbreviations),
+        )
+        raw = self._generate_json(
+            prompt,
+            temperature=Constants.Llm.TEMPERATURE_JSON,
+            max_tokens=Constants.Llm.MAX_TOKENS_LONG_FORM,
+        )
+        if not isinstance(raw, dict):
+            raise SimplifyError(ErrorCode.LLM_INVALID_JSON, detail=f"expected dict, got {type(raw)}")
+
+        try:
+            model = CarePlan.model_validate(raw)
+        except ValidationError as e:
+            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
+
+        return _verify_assembly(model, facts)
 
     def iter_steps(
         self,
