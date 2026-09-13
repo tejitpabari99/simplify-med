@@ -8,6 +8,7 @@ from care_plan import pipeline as pipeline_module
 from care_plan.pipeline import CarePlanPipeline
 from errors import SimplifyError, ErrorCode
 from models.care_plan.care_plan import CarePlan
+from models.ledger import Unit
 from utils.constants import Constants
 from care_plan.pipeline import _llm_schema
 
@@ -111,6 +112,96 @@ def test_llm_schema_excludes_terms_and_raw():
 def test_llm_schema_excludes_note():
     schema = _llm_schema(CarePlan, {"terms", "raw", "note"})
     assert "note" not in schema["properties"]
+
+
+def test_grounding_schema_is_a_json_array_of_grounded_fact_raw():
+    schema = json.loads(pipeline_module._GROUNDING_SCHEMA)
+
+    assert schema["type"] == "array"
+    props = schema["items"]["properties"]
+    assert "category" in props
+    assert "unit_id" in props
+    assert "quote" in props
+    assert "text" in props
+    assert "id" not in props
+    assert "char_start" not in props
+    assert "char_end" not in props
+
+
+def test_ground_assigns_sequential_ids_from_array_position():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    units = [
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily"),
+        Unit(id=2, file="note.pdf", page=1, line=2, text="Follow up in two weeks for bloodwork"),
+    ]
+    pipeline._generate_json = lambda *args, **kwargs: [
+        {
+            "category": "medications",
+            "unit_id": 1,
+            "quote": "warfarin 5mg",
+            "text": "Take warfarin 5mg daily.",
+        },
+        {
+            "category": "follow_up",
+            "unit_id": 2,
+            "quote": "bloodwork",
+            "text": "Get bloodwork done.",
+        },
+    ]
+
+    facts = pipeline.ground(units, [])
+
+    assert [fact.id for fact in facts] == [1, 2]
+
+
+def test_ground_rejects_non_list_llm_output():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    pipeline._generate_json = lambda *args, **kwargs: {"not": "a list"}
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.ground([], [])
+    assert exc_info.value.error_code == ErrorCode.LLM_INVALID_JSON
+
+
+def test_ground_rejects_extra_key_on_fact():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    units = [Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily")]
+    pipeline._generate_json = lambda *args, **kwargs: [
+        {
+            "category": "medications",
+            "unit_id": 1,
+            "quote": "warfarin 5mg",
+            "text": "Take warfarin 5mg daily.",
+            "importance": "high",
+        },
+    ]
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.ground(units, [])
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+
+
+def test_ground_uses_long_form_token_budget_and_json_temperature():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    units = [Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily")]
+    captured_kwargs = {}
+
+    def _fake_generate_json(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return [
+            {
+                "category": "medications",
+                "unit_id": 1,
+                "quote": "warfarin 5mg",
+                "text": "Take warfarin 5mg daily.",
+            },
+        ]
+
+    pipeline._generate_json = _fake_generate_json
+    pipeline.ground(units, [])
+
+    assert captured_kwargs["max_tokens"] == Constants.Llm.MAX_TOKENS_LONG_FORM
+    assert captured_kwargs["temperature"] == Constants.Llm.TEMPERATURE_JSON
 
 
 def test_llm_schema_model_validate_without_terms_and_raw():
