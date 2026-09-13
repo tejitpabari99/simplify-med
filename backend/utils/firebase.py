@@ -230,7 +230,7 @@ def update_job_stage(job_id: str, stage: int) -> None:
 
 def complete_job(job_id: str, output_data: dict, name: str) -> None:
     """Mark a job completed. Always deletes the top-level input_text and
-    input provenance fields in the SAME update -- the raw pasted/extracted document text is write-once
+    input_provenance fields in the SAME update -- the raw pasted/extracted document text is write-once
     (by create_job_doc) and read-once (by resolve_input_from_job_doc at
     worker start), never needed again after this point. This is a *separate*
     field from output_data["input"]["text"] (already popped by the caller,
@@ -258,7 +258,7 @@ def complete_job(job_id: str, output_data: dict, name: str) -> None:
 
 
 def fail_job(job_id: str, error_data: dict) -> None:
-    """Mark a job failed. Always clears input_text and the input provenance --
+    """Mark a job failed. Always clears input_text and input_provenance --
     see complete_job's docstring; applies equally on the failure path since
     the raw text is no longer needed once the job has reached ANY terminal
     state."""
