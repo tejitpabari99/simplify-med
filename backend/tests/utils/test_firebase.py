@@ -167,6 +167,26 @@ def test_complete_job_unconditionally_clears_top_level_input_text(mock_client):
 
 
 @patch("utils.firebase.firestore_client")
+def test_complete_job_writes_terminal_stage_from_constants(mock_client):
+    """complete_job's terminal `stage` value must track
+    Constants.Pipeline.PIPELINE_STEPS.CORRECT.number, not a hardcoded
+    literal — regression guard for the exact bug pattern PRD
+    06-pipeline-orchestration §4.7 fixes (a magic number matching the old
+    final step, one short of the real final stage after renumbering)."""
+    from utils.firebase import complete_job
+    from utils.constants import Constants
+
+    doc_ref = MagicMock()
+    mock_client.return_value.collection.return_value.document.return_value = doc_ref
+
+    complete_job("j1", {"care_plan": {}}, "name")
+
+    update_fields = doc_ref.update.call_args.args[0]
+    assert update_fields["stage"] == Constants.Pipeline.PIPELINE_STEPS.CORRECT.number
+    assert update_fields["stage"] == 6
+
+
+@patch("utils.firebase.firestore_client")
 def test_fail_job_raises_firestore_error(mock_client):
     from utils.firebase import fail_job, FirestoreError
     mock_client.return_value.collection.return_value.document.return_value.update.side_effect = Exception("network")

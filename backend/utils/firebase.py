@@ -12,6 +12,7 @@ import firebase_admin
 from firebase_admin import auth, credentials, firestore
 from flask import g, request
 from errors import make_error_response, ErrorCode
+from utils.constants import Constants
 
 from dotenv import load_dotenv
 
@@ -243,7 +244,7 @@ def complete_job(job_id: str, output_data: dict, name: str) -> None:
         db = firestore_client()
         update_fields: dict = {
             "status": "completed",
-            "stage": 5,
+            "stage": Constants.Pipeline.PIPELINE_STEPS.CORRECT.number,   # was: "stage": 5
             "output_data": output_data,
             "name": name,
             "completed_at": now,
