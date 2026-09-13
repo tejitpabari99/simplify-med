@@ -8,95 +8,21 @@ from care_plan import pipeline as pipeline_module
 from care_plan.pipeline import CarePlanPipeline
 from errors import SimplifyError, ErrorCode
 from models.care_plan.care_plan import CarePlan
-from models.ledger import Unit
+from models.ledger import Fact, Unit
 from utils.constants import Constants
 from care_plan.pipeline import _llm_schema
 
 
-def test_structuring_schema_is_generated_from_structured_llm_model():
-    schema = json.loads(pipeline_module._STRUCTURING_SCHEMA)
-
-    assert schema["properties"]["doc_type"]["default"] == "care_plan"
-    assert "summary" in schema["properties"]
-    assert "medications" in schema["properties"]
-
-
-def test_structure_appointment_note_validates_and_returns_json_model_dump():
-    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
-    pipeline._generate_json = lambda *args, **kwargs: {"summary": "You came in for care."}
-
-    structured = pipeline.structure_appointment_note("clarified text")
-
-    assert structured["doc_type"] == "care_plan"
-    assert structured["version"] == Constants.Schema.CARE_PLAN_VERSION
-    assert structured["summary"] == "You came in for care."
-    assert structured["reason_for_visit"] == []
-
-
-def test_structure_appointment_note_uses_long_form_token_budget():
-    """Regression: structure_appointment_note is the last LLM step and emits a
-    full structured JSON care plan, so it must use MAX_TOKENS_LONG_FORM (like
-    simplify_language_with_term_plan and clarify_and_action) rather than the
-    default MAX_TOKENS -- using the smaller default was the root cause of a
-    2-page document failing with a misleading "too long" error only after
-    every earlier pipeline step had already completed."""
-    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
-    captured_kwargs = {}
-
-    def _fake_generate_json(*args, **kwargs):
-        captured_kwargs.update(kwargs)
-        return {"summary": "You came in for care."}
-
-    pipeline._generate_json = _fake_generate_json
-    pipeline.structure_appointment_note("clarified text")
-
-    assert captured_kwargs["max_tokens"] == Constants.Llm.MAX_TOKENS_LONG_FORM
-
-
-def test_structure_appointment_note_rejects_extra_llm_key():
-    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
-    pipeline._generate_json = lambda *args, **kwargs: {
-        "summary": "You came in for care.",
-        "unexpected": "drift",
-    }
-
-    with pytest.raises(SimplifyError) as exc_info:
-        pipeline.structure_appointment_note("clarified text")
-    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
-
-
-def test_run_returns_care_plan_model_without_internal_scores(monkeypatch):
-    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
-
-    monkeypatch.setattr(
-        pipeline_module,
-        "detect_terms",
-        lambda text: {
-            "substitution_candidates": [],
-            "preserve_and_define_terms": [],
-            "abbreviations": [],
-        },
-    )
-    monkeypatch.setattr(
-        pipeline_module,
-        "build_glossary_from_simplified_text",
-        lambda clarified, terms: {},
-    )
-    pipeline.simplify_language_with_term_plan = lambda *args: "simplified"
-    pipeline.clarify_and_action = lambda simplified, abbreviations: "clarified"
-    pipeline.structure_appointment_note = lambda clarified: {
+def _minimal_care_plan_dict() -> dict:
+    return {
         "doc_type": "care_plan",
         "version": Constants.Schema.CARE_PLAN_VERSION,
         "summary": "You came in for care.",
     }
 
-    care_plan = pipeline.run("original note")
 
-    assert isinstance(care_plan, CarePlan)
-    data = care_plan.model_dump(mode="json")
-    assert "raw" not in data
-    assert "before_score" not in data
-    assert "after_score" not in data
+def _minimal_facts() -> list[Fact]:
+    return [Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1, text="x")]
 
 
 def test_llm_schema_excludes_terms_and_raw():
@@ -213,3 +139,87 @@ def test_llm_schema_model_validate_without_terms_and_raw():
     assert "terms" not in dumped
     assert "raw" not in dumped
     assert dumped["summary"] == "You came in for care."
+
+
+# ---------------------------------------------------------------------------
+# Assemble schema / assemble_and_render boundary tests (PRD 04 §7.3)
+# ---------------------------------------------------------------------------
+
+def test_assemble_schema_is_generated_from_care_plan_minus_terms_and_note():
+    # NOTE: pydantic v2's model_json_schema() emits nested models as a
+    # `$ref` into a top-level `$defs` map rather than inlining them under
+    # `items` -- so `medications`'s item schema is resolved via
+    # `$defs[Medication]`, not `props["medications"]["items"]["properties"]`
+    # as the TASKS.md example assumed. Deviation noted; same assertion intent.
+    schema = json.loads(pipeline_module._ASSEMBLE_SCHEMA)
+    props = schema["properties"]
+
+    assert "terms" not in props
+    assert "note" not in props
+    assert "summary_fact_ids" in props
+    assert "medications" in props
+    medication_ref = props["medications"]["items"]["$ref"]
+    medication_def_name = medication_ref.rsplit("/", 1)[-1]
+    assert "source_fact_ids" in schema["$defs"][medication_def_name]["properties"]
+
+
+def test_assemble_and_render_returns_care_plan_instance():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    pipeline._generate_json = lambda *args, **kwargs: _minimal_care_plan_dict()
+
+    result = pipeline.assemble_and_render(_minimal_facts(), [], [], [])
+
+    assert isinstance(result, CarePlan)
+
+
+def test_assemble_and_render_uses_long_form_token_budget_and_json_temperature():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    captured_kwargs = {}
+
+    def _fake_generate_json(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _minimal_care_plan_dict()
+
+    pipeline._generate_json = _fake_generate_json
+    pipeline.assemble_and_render(_minimal_facts(), [], [], [])
+
+    assert captured_kwargs["max_tokens"] == Constants.Llm.MAX_TOKENS_LONG_FORM
+    assert captured_kwargs["temperature"] == Constants.Llm.TEMPERATURE_JSON
+
+
+def test_assemble_and_render_rejects_non_dict_llm_output():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    pipeline._generate_json = lambda *args, **kwargs: ["not", "a", "dict"]
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.assemble_and_render(_minimal_facts(), [], [], [])
+    assert exc_info.value.error_code == ErrorCode.LLM_INVALID_JSON
+
+
+def test_assemble_and_render_rejects_extra_llm_key():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    pipeline._generate_json = lambda *args, **kwargs: {
+        **_minimal_care_plan_dict(),
+        "importance": "high",
+    }
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.assemble_and_render(_minimal_facts(), [], [], [])
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+
+
+def test_assemble_and_render_raises_on_empty_fact_list():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    called = False
+
+    def _fake_generate_json(*args, **kwargs):
+        nonlocal called
+        called = True
+        return _minimal_care_plan_dict()
+
+    pipeline._generate_json = _fake_generate_json
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.assemble_and_render(facts=[], substitution_candidates=[], preserve_and_define_terms=[], abbreviations=[])
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+    assert called is False
