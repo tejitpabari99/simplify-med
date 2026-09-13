@@ -25,6 +25,7 @@ from services.care_plan_input import (
     upload_combined_pdf,
     validate_extracted_text_length,
 )
+from services.unitizer import provenance_for_pasted_text
 from utils.markers.markers import Markers
 from utils.markers.marker import Scope
 from errors import make_error_response, ErrorCode, SimplifyError
@@ -47,6 +48,7 @@ def _resolve_job_input(user_id: str) -> dict:
             "input_text": text_input,
             "input_source_filename": "text_input",
             "input_pdf_gcs_uri": None,
+            "input_provenance": provenance_for_pasted_text(text_input),
             "input_version": Constants.Pipeline.PIPELINE_VERSION,
             "grading_enabled": True,
         }
@@ -74,6 +76,7 @@ def _resolve_job_input(user_id: str) -> dict:
         "input_text": resolved.text,
         "input_source_filename": resolved.source_filename,
         "input_pdf_gcs_uri": pdf_gcs_uri,
+        "input_provenance": resolved.provenance,
         "input_version": Constants.Pipeline.PIPELINE_VERSION,
         "grading_enabled": True,
         # Surface which files (if any) were tolerated-skipped as unusable
