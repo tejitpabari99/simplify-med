@@ -11,6 +11,7 @@ Returns structured data for LLM prompt construction and post-processing.
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from utils.jargon_db import (
     lookup_plain_language_terms,
@@ -26,6 +27,9 @@ from utils.text_normalization import (
 )
 from utils.llm import LLMClient
 from utils.constants import Constants
+
+if TYPE_CHECKING:
+    from models.care_plan.care_plan import CarePlan
 
 logger = logging.getLogger(__name__)
 
@@ -83,36 +87,75 @@ def detect_terms(text: str) -> dict:
     }
 
 
-def build_glossary_from_simplified_text(
-    simplified_text: str,
-    preserve_and_define_terms: list[dict],
+def render_care_plan_text(care_plan: "CarePlan") -> str:
+    """Every patient-visible text field on a CarePlan, concatenated in the
+    eight-card frontend's top-to-bottom order (brief §3.10), one field
+    value per paragraph (blank-line separated) so paragraph/sentence-
+    boundary-sensitive consumers -- utils/scoring.py:186's paragraph split
+    and its ^-anchored MULTILINE regexes -- don't merge unrelated fields
+    into one run-on unit.
+
+    Two consumers: (1) build_glossary_from_care_plan below, re-detecting
+    against the FINAL corrected output (brief §3.7); (2) 06's "after"
+    readability score, replacing event.clarified once the prose stages are
+    deleted (brief §2.5; the gap PRD 04 §9 flags, closed here).
+
+    Excludes: doc_type/version (schema plumbing), status/severity/urgency
+    (typed enums, not free text), note (internal, zero frontend consumers),
+    summary_fact_ids (ints), and terms itself (built FROM this text).
+    """
+    parts: list[str] = []
+
+    def add(value) -> None:
+        if value:
+            parts.append(value)
+
+    add(care_plan.summary)
+    for r in care_plan.reason_for_visit:
+        add(r.reason); add(r.description)
+    add(care_plan.diagnosis.changed_since_last_visit)
+    for d in care_plan.diagnosis.details:
+        add(d.title); add(d.plain_name); add(d.description); add(d.what_it_means_for_you)
+    for m in care_plan.medications:
+        add(m.title); add(m.plain_name); add(m.why); add(m.dosage)
+        add(m.frequency); add(m.timing); add(m.duration)
+        add(m.instructions); add(m.side_effects_to_watch); add(m.change)
+    for t in care_plan.tests:
+        add(t.title); add(t.plain_name); add(t.why); add(t.description); add(t.preparation)
+    for p in care_plan.procedures:
+        add(p.title); add(p.plain_name); add(p.why); add(p.what_to_expect); add(p.timeframe)
+    for o in care_plan.other:
+        add(o.title); add(o.why)
+        for step in o.steps:
+            add(step)
+        add(o.description); add(o.frequency); add(o.duration)
+    for f in care_plan.follow_up:
+        add(f.description); add(f.time_frame)
+    for w in care_plan.warning_signs:
+        add(w.symptom); add(w.what_it_might_mean); add(w.what_to_do); add(w.related_to)
+    for q in care_plan.questions:
+        add(q)
+    for item in care_plan.low_priority:
+        add(item)
+
+    return "\n\n".join(parts)
+
+
+def build_glossary_from_care_plan(
+    care_plan: "CarePlan",
+    detected_terms: list[dict],
 ) -> dict[str, dict]:
-    """
-    Re-detect Michigan medical terms in the final simplified text
-    and build a compact glossary dict for the JSON output.
-
-    This runs AFTER the LLM has rewritten the text, so the glossary
-    only contains terms actually present in the output.
-
-    Returns:
-        {"multiple sclerosis": {"definition": "...", "source": "..."}, ...}
-    """
-    # Re-check against final output text so glossary contains only surviving terms.
-    normalized_text = normalize_text(simplified_text)
+    """Re-detect terms against the FINAL corrected CarePlan (brief §3.7 /
+    §3.8 step 3). `detected_terms` is curate_glossary_terms' output
+    (curated + proposed), not the raw deterministic hits -- curation has
+    already finished on its background thread by the time correct() (05)
+    returns, well before this runs."""
+    normalized_text = normalize_text(render_care_plan_text(care_plan))
     found_terms = []
-    for term in preserve_and_define_terms:
-        # Check the concrete matched variant first, then canonical inflections.
-        lookup_aliases = [
-            term.get("matched_term") or term["term"],
-            *inflected_aliases(term["term"]),
-        ]
-        if any(
-            # Normalize alias candidates to align with normalized output text.
-            contains_normalized_term(normalized_text, normalize_text(alias))
-            for alias in lookup_aliases
-        ):
+    for term in detected_terms:
+        lookup_aliases = [term.get("matched_term") or term["term"], *inflected_aliases(term["term"])]
+        if any(contains_normalized_term(normalized_text, normalize_text(alias)) for alias in lookup_aliases):
             found_terms.append(term)
-    # Convert filtered hits into the compact keyed glossary structure.
     return build_terms_glossary(found_terms)
 
 
