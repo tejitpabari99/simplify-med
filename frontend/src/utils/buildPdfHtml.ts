@@ -1,4 +1,5 @@
 import type { SimplifiedCarePlan, Grading } from '../types/envelope';
+import { buildNextStepsRows, NEXT_STEPS_TYPE_LABELS } from './nextSteps';
 
 export function escapeHtml(value: string): string {
   return value
@@ -34,11 +35,8 @@ export function buildPdfHtml(result: SimplifiedCarePlan, grading?: Grading, opti
     sections.push(`${h2('Why You Came In')}${items}`);
   }
 
-  if (result.diagnosis && (result.diagnosis.main_conclusion || result.diagnosis.details?.length)) {
+  if (result.diagnosis && result.diagnosis.details?.length) {
     let diagnosis = '';
-    if (result.diagnosis.main_conclusion) {
-      diagnosis += `<p style="color:#374151;font-weight:500;margin:0 0 8px 0;">${escapeHtml(result.diagnosis.main_conclusion)}</p>`;
-    }
     if (result.diagnosis.changed_since_last_visit) {
       diagnosis += `<p style="color:#0F766E;margin:0 0 8px 0;">Compared to last visit: ${escapeHtml(result.diagnosis.changed_since_last_visit)}</p>`;
     }
@@ -52,64 +50,38 @@ export function buildPdfHtml(result: SimplifiedCarePlan, grading?: Grading, opti
     sections.push(`${h2('What the Doctor Found')}${diagnosis}`);
   }
 
-  if (result.medications?.length) {
-    const items = result.medications.map(m =>
-      `<div style="padding:8px 12px;margin-bottom:6px;background:#F9FAFB;border-radius:6px;">
-        <strong>${escapeHtml(m.plain_name ? `${m.plain_name} (${m.title})` : m.title)}</strong>
-        ${m.change ? `<span style="color:#D97706;font-size:11px;font-weight:700;margin-left:6px;">[${escapeHtml(m.change_description || 'CHANGED')}]</span>` : ''}
-        ${m.why ? `<br><span style="color:#1D4ED8;font-size:13px;">Why: ${escapeHtml(m.why)}</span>` : ''}
-        ${m.dosage || m.frequency ? `<br><span style="color:#374151;font-size:13px;">${[m.dosage, m.frequency, m.timing, m.duration].filter(Boolean).map(value => escapeHtml(value as string)).join(' · ')}</span>` : ''}
-        ${m.side_effects_to_watch ? `<br><span style="color:#D97706;font-size:13px;">Watch for: ${escapeHtml(m.side_effects_to_watch)}</span>` : ''}
-      </div>`,
-    ).join('');
-    sections.push(`${h2('Your Medications')}${items}`);
-  }
-
-  if (result.tests?.length) {
-    const items = result.tests.map(t =>
-      `<div style="padding:8px 12px;margin-bottom:6px;background:#F9FAFB;border-radius:6px;">
-        <strong>${escapeHtml(t.plain_name ? `${t.plain_name} (${t.title})` : t.title)}</strong>
-        ${t.why ? `<br><span style="color:#1D4ED8;font-size:13px;">Why: ${escapeHtml(t.why)}</span>` : ''}
-        ${t.description ? `<br><span style="color:#6B7280;font-size:13px;">${escapeHtml(t.description)}</span>` : ''}
-        ${t.preparation ? `<p><strong>Preparation:</strong> ${escapeHtml(t.preparation)}</p>` : ''}
-      </div>`,
-    ).join('');
-    sections.push(`${h2('Tests')}${items}`);
-  }
-
-  if (result.procedures?.length) {
-    const items = result.procedures.map(p =>
-      `<div style="padding:8px 12px;margin-bottom:6px;background:#F9FAFB;border-radius:6px;">
-        <strong>${escapeHtml(p.plain_name ? `${p.plain_name} (${p.title})` : p.title)}</strong>
-        ${p.why ? `<br><span style="color:#1D4ED8;font-size:13px;">Why: ${escapeHtml(p.why)}</span>` : ''}
-        ${p.what_to_expect ? `<br><span style="color:#6B7280;font-size:13px;">What to expect: ${escapeHtml(p.what_to_expect)}</span>` : ''}
-      </div>`,
-    ).join('');
-    sections.push(`${h2('Procedures')}${items}`);
-  }
-
-  if (result.other?.length) {
-    const items = result.other.map(o => {
-      const steps = o.steps?.length ? `<ul style="margin:4px 0 0 20px;padding:0;color:#374151;">${o.steps.map(step => `<li>${escapeHtml(step)}</li>`).join('')}</ul>` : '';
+  const rows = buildNextStepsRows(result);
+  if (rows.length) {
+    const items = rows.map(row => {
+      const isDone = row.status === 'done';
+      const box = isDone ? '&#9745;' : '&#9744;'; // ☑ / ☐ numeric HTML entities
+      const color = isDone ? '#059669' : '#9CA3AF';
+      // Strikethrough travels with the color change, not instead of it (§4.4's
+      // resolved decision) -- it's the signal that survives black-and-white
+      // printing, which is the whole reason this row exists as a print target.
+      const titleStyle = isDone ? 'text-decoration:line-through;' : '';
+      const stepsHtml = row.steps?.length
+        ? `<ul style="margin:4px 0 0 20px;">${row.steps.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul>` : '';
       return `<div style="padding:8px 12px;margin-bottom:6px;background:#F9FAFB;border-radius:6px;">
-        <strong>${escapeHtml(o.title)}</strong>
-        ${o.why ? `<br><span style="color:#1D4ED8;font-size:13px;">Why: ${escapeHtml(o.why)}</span>` : ''}
-        ${o.description ? `<br><span style="color:#6B7280;font-size:13px;">${escapeHtml(o.description)}</span>` : ''}
-        ${steps}
+        <span style="color:${color};">${box}</span> <strong style="${titleStyle}">${escapeHtml(row.title)}</strong>
+        <span style="font-size:11px;color:#6B7280;">${escapeHtml(NEXT_STEPS_TYPE_LABELS[row.type])}</span>
+        ${row.why ? `<br><span style="color:#1D4ED8;font-size:13px;">Why: ${escapeHtml(row.why)}</span>` : ''}
+        ${row.detail ? `<br><span style="color:#374151;font-size:13px;">${escapeHtml(row.detail)}</span>` : ''}
+        ${stepsHtml}
       </div>`;
     }).join('');
-    sections.push(`${h2('Other Instructions')}${items}`);
+    sections.push(`${h2('Next Steps')}${items}`);
   }
 
   if (result.warning_signs?.length) {
     const items = [...result.warning_signs]
       .sort((a, b) => {
         const order: Record<string, number> = { emergency: 0, call_doctor: 1, monitor: 2, normal_side_effect: 3 };
-        return (order[a.urgency] ?? 4) - (order[b.urgency] ?? 4);
+        return (a.urgency ? order[a.urgency] : 4) - (b.urgency ? order[b.urgency] : 4);
       })
       .map(w =>
         `<div style="padding:8px 12px;margin-bottom:6px;background:#FFF7ED;border-radius:6px;">
-          <strong>${escapeHtml(w.symptom)}</strong> [${escapeHtml(w.urgency)}]
+          <strong>${escapeHtml(w.symptom)}</strong> ${w.urgency ? `[${escapeHtml(w.urgency)}]` : ''}
           ${w.what_it_might_mean ? `<br><span style="color:#6B7280;font-size:13px;">${escapeHtml(w.what_it_might_mean)}</span>` : ''}
           <br><span style="font-size:13px;">${escapeHtml(w.what_to_do)}</span>
         </div>`,
@@ -122,9 +94,9 @@ export function buildPdfHtml(result: SimplifiedCarePlan, grading?: Grading, opti
     sections.push(`${h2('Questions to Ask')}<ul style="margin:0;padding-left:20px;color:#0369A1;">${items}</ul>`);
   }
 
-  if (result.follow_up?.length) {
-    const items = result.follow_up.map(f => `<li>${escapeHtml(f.description)} - ${escapeHtml(f.time_frame)}</li>`).join('');
-    sections.push(`${h2('Follow-Up')}<ul style="margin:0;padding-left:20px;color:#374151;">${items}</ul>`);
+  if (includeLowPriority && result.low_priority?.length) {
+    const items = result.low_priority.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+    sections.push(`${h2('Other Items')}<ul style="margin:0;padding-left:20px;color:#6B7280;">${items}</ul>`);
   }
 
   if (includeGlossary && result.terms && Object.keys(result.terms).length > 0) {
@@ -147,11 +119,6 @@ export function buildPdfHtml(result: SimplifiedCarePlan, grading?: Grading, opti
       return `<div style="margin-bottom:6px;"><strong>${escapeHtml(name)}:</strong> <span style="color:#374151;">${score}</span></div>`;
     }).join('');
     sections.push(`${h2('Readability')}${items}`);
-  }
-
-  if (includeLowPriority && result.low_priority?.length) {
-    const items = result.low_priority.map(item => `<li>${escapeHtml(item)}</li>`).join('');
-    sections.push(`${h2('Other Items')}<ul style="margin:0;padding-left:20px;color:#6B7280;">${items}</ul>`);
   }
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/>
