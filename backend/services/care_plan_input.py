@@ -417,10 +417,9 @@ def load_job_input(job) -> tuple[str, list[SourceSpan]]:  # job: models.job.JobD
     """Download and parse the (text, provenance) pair the API wrote to GCS
     at job-creation time (upload_job_input, §4.5) -- the one GCS read this
     performs per job, spent once at the start of the worker's run
-    (routes/worker.py). Supersedes resolve_input_from_job_doc and
-    resolve_units_from_job_doc (PRD 02 §4.7), which read job.input_text/
-    job.input_provenance directly off the job doc; neither field exists on
-    JobDoc any more (PRD 09 §4.11).
+    (routes/worker.py). This replaces the former job-document transport: the
+    raw document and provenance map are now read together from GCS instead
+    of being stored inline on JobDoc.
 
     Raises SimplifyError(ErrorCode.PIPELINE_ERROR) -- never a bare
     exception -- if the job has no input_payload_gcs_uri at all, the

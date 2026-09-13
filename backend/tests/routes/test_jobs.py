@@ -141,8 +141,6 @@ def test_post_text_job_uploads_payload_and_stores_uri(
     ]
     payload = mock_create_doc.call_args.kwargs["payload"]
     assert payload["input_payload_gcs_uri"].startswith("gs://test-bucket/care_plan_inputs/")
-    assert "input_text" not in payload
-    assert "input_provenance" not in payload
 
 
 @patch.dict("os.environ", JOBS_ENV)

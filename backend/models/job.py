@@ -44,10 +44,9 @@ class JobDoc(JsonModel):
     error_data: Optional[ErrorDetail] = None
 
     # ── Input provenance ──────────────────────────────────────────────────
-    # input_text and input_provenance no longer live here -- both moved to a
-    # GCS object referenced by input_payload_gcs_uri (PRD 09). Firestore
-    # holds only what the frontend renders or what routing/cleanup needs;
-    # the raw input text and its provenance map are neither.
+    # The raw document and provenance map live in the GCS object referenced
+    # by input_payload_gcs_uri. Firestore holds only what the frontend renders
+    # or what routing and cleanup need.
     input_source_kind: SourceKind
     input_source_filename: str
     input_pdf_gcs_uri: Optional[str] = None

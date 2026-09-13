@@ -41,8 +41,8 @@ def _resolve_job_input(user_id: str) -> dict:
     json_data = request.get_json(silent=True) or {}
     text_input = (request.form.get("text") or json_data.get("text") or "").strip()
     if text_input:
-        # Enforces the char cap, the UTF-8 byte cap (Finding 1), and rejects
-        # unstorable text such as a lone UTF-16 surrogate (Finding 5).
+        # Enforces the character cap and rejects unstorable text such as a
+        # lone UTF-16 surrogate (Finding 5).
         validate_extracted_text_length(text_input)
         provenance = provenance_for_pasted_text(text_input)
         input_payload_gcs_uri = upload_job_input(text_input, provenance, user_id)

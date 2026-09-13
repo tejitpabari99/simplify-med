@@ -702,7 +702,7 @@ _REAL_GRADING_DICT = build_grading_with_before_after_score(
 @patch("routes.worker.update_job_stage")
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
-def test_job_completed_output_strips_input_text(
+def test_job_completed_output_strips_full_document_copy(
     mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
     mock_delete_gcs, client_worker,
 ):
