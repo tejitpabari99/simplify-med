@@ -33,11 +33,11 @@ worker_bp = Blueprint("worker", __name__)
 
 
 def _strip_internal_provenance(care_plan: dict) -> None:
-    """Remove fields that exist purely for the pipeline's own use --
-    evidence citations into the grounding ledger -- and must never reach
-    the API response, the frontend, or the PDF (brief §3.10; PRD 01
-    §4.1/§9: a fact-ID list is exactly as internal as the ledger it cites
-    into, regardless of size). Mutates `care_plan` (the
+    """Remove full raw artifacts and pipeline-internal evidence citations.
+
+    These fields must never reach the API response, the frontend, or the PDF
+    (brief §3.10; PRD 01 §4.1/§9: a fact-ID list is exactly as internal as
+    the ledger it cites into, regardless of size). Mutates `care_plan` (the
     `output_data["care_plan"]` dict, already a plain dict via
     `envelope.to_dict()` by the time this runs) in place.
 
@@ -46,6 +46,7 @@ def _strip_internal_provenance(care_plan: dict) -> None:
     a single `.pop()` the way `raw`'s removal could be -- each list has
     to be walked.
     """
+    care_plan.pop("raw", None)
     care_plan.pop("summary_fact_ids", None)
     for _key in ("medications", "tests", "procedures", "other", "follow_up", "warning_signs"):
         for _item in care_plan.get(_key, []):
