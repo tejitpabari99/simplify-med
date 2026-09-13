@@ -4,6 +4,8 @@ PRDs 01-08 decompose [`../brainstorm.v1.md`](../brainstorm.v1.md) into implement
 
 **Status: all nine PRDs are settled.** 01-08 went through a prior revision pass that resolved every `[OPEN]` item blocking `dev-tasks` and reconciled cross-references after concurrent edits. 09 was written afterward, against the post-01-08 codebase, as a self-contained follow-on. `grep -rn "\[OPEN" prds/` surfaces nothing but prose that references past open items as history, across all nine files.
 
+**A third wave — PRDs 10-18 — was added after 01-09 landed.** It decomposes `../comparison-drive-research-bundle.v1.md` (an external, evidence-backed research bundle independently compared against this branch's own design) into nine further sub-projects, and is covered in full in its own section, ["Wave 3 — PRDs 10-18"](#wave-3--prds-10-18-fidelity-hardening-and-documentation), near the end of this document. Everything above this point (01-09) is the original, unmodified index; nothing in this revision rewrites or degrades it.
+
 ## Sub-projects
 
 | # | Sub-project | Scope | Depends on | Lines |
@@ -134,3 +136,140 @@ Every §8 item across all nine PRDs, deduplicated and attributed:
 An earlier revision of this index recorded a separate architectural concern the owner raised, explicitly out of scope for PRDs 01-08 at the time: moving `JobDoc.input_text`/`input_provenance` off Firestore and onto GCS, since the Firestore job document exists only as the API→worker transport (the Cloud Tasks payload carries just the job id) and `MAX_TEXT_BYTES` existed solely to keep that document under Firestore's 1 MiB limit.
 
 **That follow-on is no longer deferred or unwritten — it is [`09-input-transport/PRD.md`](09-input-transport/PRD.md).** It replaces both Firestore fields with a single GCS object per job (`JobInputPayload`, holding `text` and `provenance` together) under the existing `care_plan_inputs/{user_id}/inputs/` prefix, referenced from `JobDoc` by a new `input_payload_gcs_uri` field; deletes `MAX_TEXT_BYTES` outright (constant, backend check, and frontend mirror) now that its sole justification no longer applies; and deletes `resolve_input_from_job_doc`/`resolve_units_from_job_doc` in favor of the worker calling `load_job_input(job)` then `services.unitizer.unitize(text, provenance)` directly. PRDs 01-08 still land first, exactly as written, with `input_text`/`input_provenance` on `JobDoc` exactly as 02 originally specifies (02 §4.1/§4.10) — 09 is a follow-on stage applied after, not a revision bundled into any of the eight. See 02 §9 for the short forward-pointer recording this, and 09 §4.14 for the full accounting of what it supersedes versus what it leaves standing.
+
+---
+
+## Wave 3 — PRDs 10-18 (fidelity hardening and documentation)
+
+PRDs 10-18 decompose [`../comparison-drive-research-bundle.v1.md`](../comparison-drive-research-bundle.v1.md) — an external, evidence-backed research bundle independently compared against this branch's own design — into nine further sub-projects. Seven come from the bundle's own recommendations R1-R7 (10↔R2+R3, 11↔R1, 12↔R4, 13↔R5, 14↔R6, 15↔R7); two (16, 17) are documentation PRDs the owner requested directly, outside the bundle ("someone else accessing this repo should know the full flow, architecture, setup, infra — everything" for 16; "an understanding of the scientific side of things" for 17); one (18) is a soundness gap discovered mid-decomposition, when PRD 14 went looking for a merge signal and found diagnosis-category merges structurally invisible to any fact-based check.
+
+**Status: all nine are design-only.** No code in `backend/`/`frontend/` reflects any of them — verified in PRD 16 §4.0 by direct grep (`extraction_method`, `NUMERACY`, `_UNIT_WORD_MAX_LENGTH` all absent from `backend/`; `Medication.why` is still `str = ""`, not `str | None`). `dev-tasks` is the next step for each, once approved. Unlike 01-08/09, this wave has **not** been through a settling revision pass — each PRD's own `[OPEN]`/`[DEFERRED]` items are real and unresolved, consolidated below rather than cleared.
+
+### Sub-projects (10-18)
+
+| # | Sub-project | Scope | Depends on | Lines |
+|---|---|---|---|---|
+| 10 | numeric-integrity | `NUMERACY` prompt block (forbids an added normal/abnormal label, reference range, rounding, unit conversion, percent/frequency reframe, or unattributed severity) added to the shared `_style_rules.txt`; a deterministic, model-free `_check_numeric_parity` tokenizer + check at the tail of `_verify_assembly`; log-only | 01, 03, 04, 05 | 367 |
+| 11 | omission-signal | Consumes the already-computed, previously-discarded `review_result.coverage` field; one `_log_coverage_summary` INFO aggregate (category-bucketed omission count) inside `iter_steps` step 6; deliberately no fact text logged | 01, 03, 05, 06 | 298 |
+| 12 | extraction-provenance | `extraction_method: Literal["native","ocr","pasted"]` added to `SourceSpan`/`Unit`, copied verbatim from the two known producers through `unitize()`; two log-only aggregates (unit-level, fact-level); the grounding prompt never sees the tag | 01, 02, 09 | 552 |
+| 13 | absent-value-contract | `why: str \| None = None` on `Medication`/`Test`/`Procedure`/`OtherInstruction`, `""` normalized to `None` by a shared validator; deletes the "Not stated in your note." sentinel from both prompts; the one rendering fallback moves to `frontend/src/utils/nextSteps.ts` | 01, 04, 05, 08 | 524 |
+| 14 | merge-provenance | **Rejects** `merged: bool` (an unverifiable model self-report, the same class PRD 02 already rejected for `file`/`page`) in favor of the already-free `len(source_fact_ids) > 1`; hardens the MERGE prompt paragraph with a three-site worked example; one log-only `merge_candidate_signal` aggregate | 01, 04 | 362 |
+| 15 | design-doc-evidence-labeling | Defines RF/DJ/PD evidence-provenance labels (orthogonal to the `[OPEN]`/`[RESOLVED]`/`[DEFERRED]` status-tag axis), an inline-tag convention, and seeds `docs/uncalibrated-constants.md` with 6 real constants — no code, no schema, no test | — | 161 |
+| 16 | technical-documentation | A line-by-line audit finds 4 of 7 `docs/` files materially false about the current four-call pipeline; specifies a rewritten `pipeline.md`/`architecture.md`/`data-and-privacy.md`, a new `flow.md` (mermaid sequence diagram), `error-taxonomy.md`, and `testing.md`; documents the **post-01-09** state now, not the post-10-18 state | 01-09 (landed), aware of 10-15 (written), 15 specifically for vocabulary/register | 247 |
+| 17 | scientific-documentation | Five new files under `docs/science/` (`README.md`, `design-rationale.md`, `good-summary-conformance.md`, `evidence-map.md`, `research-corpus.md`); vendors a condensed summary of the team's own research memos and the criteria doc, never the third-party papers themselves | 15, 16 | 444 |
+| 18 | diagnosis-soundness | Closes an undocumented citation-existence blind spot: `ReasonForVisit`, `DiagnosisDetail`, and `Diagnosis.changed_since_last_visit` carry no citation field and are invisible to `_verify_assembly`'s soundness guard; adds the three fields plus a dedicated nested-container check block; exempts `low_priority` (reasoned, written down for the first time); adds a regression test asserting every `CarePlan` field carries a recorded soundness classification | 01, 04, 05, 06, 13, 14 | 422 |
+
+Total across 10-18: **3,377 lines**. Grand total across all eighteen PRDs (01-09 + 10-18): **8,602 lines**.
+
+### Dependency graph (10-18)
+
+```
+Wave 1 (01-09, landed) -- the foundation every wave-3 PRD reads from
+   │
+   ├───────────────┬───────────────┬───────────────┬───────────────┐
+   ▼               ▼               ▼               ▼               ▼
+10 numeric-      11 omission-    12 extraction-  13 absent-value- 14 merge-
+   integrity        signal          provenance      contract         provenance
+   (01,03,04,05)    (01,03,05,06)   (01,02,09)      (01,04,05,08)    (01,04)
+   │               │                                │                │
+   │               │                                └────────┬───────┘
+   │               │                                         │ share care_plan.py /
+   │               │                                         │ assemble_and_render.txt
+   │               │                                         │ (14 makes ZERO care_plan.py
+   │               │                                         │  edits once its own field is
+   │               │                                         │  rejected -- seam shrinks to
+   │               │                                         │  the prompt file only)
+   │               │                                         ▼
+   │               │                                18 diagnosis-soundness
+   │               │                                (declares 01,04,05,06,13,14 as
+   │               │                                 deps; ALSO edits _verify_assembly's
+   │               │                                 tail / _ITEM_LIST_FIELDS -- an
+   │               │                                 UNDECLARED seam with 10, below)
+   │               │
+   └───────────────┴────────────────────────────────┐
+                                                      ▼
+                          pipeline.py seam summary: 10 (near _verify_assembly's
+                          tail) and 11 (inside iter_steps step 6) are disjoint,
+                          confirmed by both PRDs. 10 and 18 are NOT disjoint --
+                          both insert new code as "the last statement before
+                          _verify_assembly's return" and neither PRD names the
+                          other (see Cross-PRD couplings).
+
+15 design-doc-evidence-labeling (needs nothing)
+   │
+   ▼
+16 technical-documentation (needs 01-09 landed + is aware of 10-15 written;
+   cites 15's vocabulary/register, not blocked by it; independent of the
+   10/11/12/13/14/18 code track since it documents only the landed state)
+   │
+   ▼
+17 scientific-documentation (needs 15 directly + 16 directly; the two
+   families' own cross-reference convention is JOINTLY [OPEN] -- see
+   Cross-PRD couplings)
+```
+
+### Recommended implementation order (10-18)
+
+1. **15 — design-doc-evidence-labeling.** Zero dependencies, zero code/schema/prompt touch — land first so 16 and 17 have a vocabulary and a seeded register to point at from day one.
+2. **10, 11, 12 — the three independent, log-only leaf PRDs.** Each depends only on already-landed wave-1 PRDs; land in any relative order among themselves, but coordinate `Constants.Observability.LOG_EXTRA_KEYS` as independent appends, never a wholesale rewrite (11 adds `coverage_signal`, 12 adds `extraction_signal`/`extraction_signal_facts`; **10 does not touch this list at all** — see Cross-PRD couplings for why that matters).
+3. **13 — absent-value-contract.** Land before 14 and 18: PRD 14 §4.7 was authored against the assumption that 13 would exist first, and PRD 18 explicitly names 13 as a dependency.
+4. **14 — merge-provenance.** Lands after 13, matching the order 18 itself declares. Because 14 ends up making zero `care_plan.py` edits (§4.1's rejection), the actual landing-order risk between 13 and 14 is low regardless — this keeps the dependency chain 18 declares intact rather than for any technical necessity.
+5. **18 — diagnosis-soundness.** Depends explicitly on 13 and 14. Also land it after 10: the two share an undeclared seam at the tail of `_verify_assembly` (Cross-PRD couplings), and since 10 has no dependency on 18 and was conceived first, land 10's `_check_numeric_parity` call first and rebase 18's new diagnosis block after it, not the reverse.
+6. **16 — technical-documentation.** Independent of the entire 10/11/12/13/14/18 code track, since it documents only the already-landed 01-09 state by explicit sequencing decision (16 §4.0) — can be authored and landed in parallel with the code PRDs. Land before 17.
+7. **17 — scientific-documentation.** Depends on both 15 and 16 by its own header (§0); lands last.
+
+### Cross-PRD couplings (10-18)
+
+| Coupling | Where decided | Reaches into |
+|---|---|---|
+| `Constants.Observability.LOG_EXTRA_KEYS` gains three independent appends to the same list: `coverage_signal`, `extraction_signal`/`extraction_signal_facts`, `merge_candidate_signal` | 11 (§4.3), 12 (§4.9), 14 (§4.4) | `backend/utils/constants.py` — whoever lands second or third must **merge** their addition into the list as it stands at that point, never overwrite it wholesale from their own PRD's snippet. **This is the single most likely way this batch breaks on landing.** Note: **10 does not add an entry to this list** — confirmed by direct reading of PRD 10 §4.4 (it logs via plain string interpolation, no `extra=`) and by PRD 12 §4.9's own cross-check — despite this batch's initial framing assuming it might |
+| `care_plan.py` / `assemble_and_render.txt` shared by 13 and 14 | 13 §4.8, 14 §4.7 | 14 rejects its own `merged: bool` field (§4.1), so it makes **zero** `care_plan.py` edits — the seam collapses to the prompt file only, and even there the two paragraphs are adjacent-but-independent (13 rewrites `NOT STATED --`, 14 rewrites `MERGE --`) |
+| `care_plan.py` shared by 13 and 18 | 13 §4.1, 18 §4.2/§4.8 | 13 makes `why` nullable on `Medication`/`Test`/`Procedure`/`OtherInstruction`; 18 adds `source_fact_ids` to `ReasonForVisit`/`DiagnosisDetail` and `changed_since_last_visit_fact_ids` to `Diagnosis` — zero class-body overlap, no conflict expected regardless of landing order |
+| `assemble_and_render.txt`'s `MAPPING`/`SOURCE_FACT_IDS` paragraphs (18) vs. `MERGE` (14) vs. `NOT STATED` (13) | 13, 14, 18 | Three PRDs each own one paragraph of the same prompt file; all three independently confirm (13 §4.8, 14 §4.7, 18 §4.8) their paragraphs are adjacent but textually independent — no shared sentence needs to satisfy more than one PRD |
+| `pipeline.py`'s `_verify_assembly` tail — **10 and 18 both insert new code as the last statement before `return`, and neither PRD names the other as a dependency or seam** | 10 §4.4/§4.7 (names only 11 as a seam), 18 §4.3 (names no `_verify_assembly` seam at all) | A **real, undeclared coupling**, found only by reading both PRDs against each other — not stated in either. Whoever implements both must pick one final in-function ordering; the recommended order (§ above) is 10 first, 18's diagnosis block after |
+| `pipeline.py`'s `_verify_assembly` (10) vs. `iter_steps` step 6 (11) | 10 §4.7, 11 §4.1 | Explicitly confirmed disjoint by both PRDs — no conflict |
+| `docs/uncalibrated-constants.md` authorship | 15 §4.3 (specifies content, not who creates the file), 16 (assumes it exists, links to it from `pipeline.md`), 17 §9 (proposes "16 creates it, 17 only links" as a default, explicitly unconfirmed) | **`[OPEN]`, jointly, across all three** — needs 16's author to confirm before `dev-tasks` runs on either 16 or 17 |
+| The 16↔17 documentation cross-reference convention | 16 §3 (proposes inline `"— see X for why"` / `"— see X for the exact mechanism"`), 17 §9 (proposes a different, blockquote-style `Mechanism:`/`Rationale:` pointer form) | **Two different proposed conventions, neither adopted.** Both PRDs flag this `[OPEN]` and explicitly defer to whichever lands second to reconcile — as written today the two proposals are mutually inconsistent |
+| `extraction_method` (12) documented by 16/17, not consumed by either | 12 | Non-blocking in both directions — 16/17 cite whatever 12 lands as, but neither depends on landing order relative to 12 |
+
+### Consolidated open questions (10-18)
+
+**The standing cross-batch fact carried into this wave.** PRD 05 §7.5's injected-error reviewer catch-rate protocol is specified but still unrun (reverified here: no `manual_reviewer_catch_rate.py` or `catch_rate`-named file exists anywhere in the repo). Every non-fatal, LLM-only backstop this wave still leans on inherits the same caveat — the reviewer's real-world value is asserted, not measured. Cited directly by 10 §1, 11 §1/§8, and 18 §9; 18 further ties its own `low_priority` exemption and its residual reliance on review for the newly-covered fields to whatever this protocol eventually shows.
+
+**Three findings, discovered during this batch, owned by no PRD in it:**
+
+1. **A PDF page with no text layer is silently dropped, never OCR'd.** Found while writing PRD 12 (§3, §4.2, §9 `[OPEN]`). `extract_pages_from_pdf` has no per-page OCR fallback — a scanned page inside an otherwise-native PDF vanishes from the document with no warning and no trace, and nothing downstream can detect it, because the content was never in the ledger to check against. `extraction_method`'s per-`(file, page)` `SourceSpan` placement leaves room for a future fallback without a further schema change, but PRD 12 does not build one — this is explicitly out of its scope (12 only tags what *was* extracted).
+2. **`Fact.text`'s own numeric fidelity to the source is unchecked.** Found while writing PRD 10 (§4.3, §9 `[OPEN]`). Grounding can mangle a number while paraphrasing into `Fact.text`, and PRD 10's numeric-parity check deliberately validates a rendered field against `Fact.text`, not against the original note or `quote_for()` (§4.3's three-reason argument for that choice) — so a number grounding itself corrupted is invisible to this check by construction. Adjacent to R3, outside its scope.
+3. **`frontend/src/types/carePlan.ts` types `CarePlanContent.summary_fact_ids` as required**, but `_strip_internal_provenance` always strips it server-side, so it is always absent at runtime. Found while writing PRD 18 (§6, §9 `[OPEN]`) — a pre-existing type bug predating this batch entirely, flagged for PRD 08 to clean up, not fixed here.
+
+**Per-PRD forward-looking opens, not already covered above or in Cross-PRD couplings:**
+
+- **10** — a standalone ordinal day-of-month ("on the 12th") isn't excluded from the numeric tokenizer and could false-positive; a future numbered `steps[]` prefix in `assemble_and_render.txt` would introduce spurious digit tokens. Neither is built defensively; both wait on the manual smoke test (§8).
+- **11** — whether a real-world omission rate, once observed, should feed back into revisiting the soundness-over-completeness inversion itself; whether a Cloud Logging-based metric/alert on `coverage_signal.rate` is worth building (needs a production baseline first).
+- **12** — whether the fact-level OCR aggregate (§4.8.2) should also break down by `FactCategory`, the way 11's `coverage_signal` does; not built because no consumer has asked for it yet.
+- **13** — `test_pipeline_review.py`'s `_care_plan_with_two_medications()` fixture still hard-codes the old "Not stated in your note." sentinel as ordinary fixture text; recommended, not required, cleanup.
+- **14** — diagnosis-category merges had no `source_fact_ids`-shaped signal at all when 14 was written (§9 `[OPEN]`). **This is actually closed by PRD 18**, written later in the same batch, which adds `source_fact_ids` to `DiagnosisDetail` (§4.2) — but 14 and 18 do not cross-reference each other on this point even though 18 directly resolves the open item 14 recorded.
+- **16** — exact target filenames for 17's doc family (partially answered now that 17 exists and names `docs/science/{README,design-rationale,good-summary-conformance,evidence-map,research-corpus}.md`, but the cross-reference *convention itself* remains open — see Cross-PRD couplings); whether `testing.md` should document the frontend's Vitest suite in the same depth as the backend's test layers.
+- **17** — whether to pursue public arXiv/DOI identifiers for the four Drive-only third-party papers (would reduce, not eliminate, a durability risk); whether `good-summary-conformance.md` needs a re-verification pass once 10-18 move from design to landed code — no PRD has explicitly claimed this as "my job" the way PRD 15's register-maintenance rule binds future PRDs generally.
+- **18** — whether a fully-emptied `diagnosis.details` should render an explicit "we couldn't confirm what was found" message instead of silently disappearing (a product/copy decision, out of this PRD's scope, flagged for a follow-up frontend PRD); whether the `low_priority` exemption (§4.6) should be revisited once/if PRD 05 §7.5's study shows a materially worse reviewer miss rate on low-stakes, list-shaped content specifically.
+
+### Consolidated manual steps (10-18)
+
+- **10** — Prompt smoke test (confirm the `NUMERACY` block doesn't make the model over-conservative; spot-check the parity check's log volume for false positives on 5-10 real notes, particularly the disclosed date/ordinal blind spots). Judgment call, not required now: whether the false-positive rate is low enough to eventually promote a numeric-parity failure into a pre-seeded reviewer correction. Tune `_UNIT_WORD_MAX_LENGTH` (15) against real notes if a legitimate compound unit gets truncated or over-captured.
+- **11** — Confirm log volume/shape once wired into a live run; decide whether/when to build a Cloud Logging-based metric or alerting policy on `coverage_signal.rate` (console/Terraform, not code, and needs a production baseline first); sanity-check the omission rate against PRD 05 §7.5's catch-rate protocol, if that protocol is ever run.
+- **12** — No blocking manual step. Awareness only: a small, permanent per-run log-volume increase (two new `logger.info` calls per job). Optional: a real-OCR-upload smoke test to eyeball `extraction_signal`/`extraction_signal_facts` showing a nonzero `ocr_rate`.
+- **13** — Real-pipeline smoke check that the model actually emits JSON `null` for an unstated `why`, rather than prose that merely resembles "not stated." Visual QA that the rendered fallback text is unchanged, on-screen and in the downloaded PDF, now that it originates from the frontend instead of pipeline output.
+- **14** — Prompt smoke test against 2-3 real/realistic notes containing a genuine 3+-site finding (e.g. a cardiac catheterization or angiogram report). Spot-check the `merge_candidate_signal` log line's structured JSON payload in a deployed environment specifically, not just locally — the same "looks fine locally, silently vanishes in production" risk PRD 11 already named for its own key.
+- **15** — Decide whether to retrofit the comparison doc (`comparison-drive-research-bundle.v1.md`) with RF/DJ/PD tags. Decide whether to add the one-line pointer to `design-agent-prompt-template.md` — **a machine-level skill file outside this repository**; per this machine's own orchestration rules that edit is routed through the `update-config` skill or the owner directly, never a `simplify-med` sub-agent. Have `dev-tasks` create `docs/uncalibrated-constants.md` from PRD 15 §4.3's content, transcribed verbatim.
+- **16** — Confirm the sequencing decision (document the post-01-09 state now, not post-10-18). Confirm the file-split decisions (`error-taxonomy.md`, `testing.md`, `flow.md` as new files, versus folding one or more back into `pipeline.md`/`architecture.md`). Sanity-check the §3 cross-reference convention once 17's actual doc filenames exist. Approve before `dev-tasks` runs.
+- **17** — Decide the `Medical device?` column (a regulatory/legal, owner-only judgment). Approve the vendoring decision (§4.6 — condensing, not verbatim-reproducing except the criteria doc's own table, the team's own memos into the repo). Check whether the four Drive-only third-party papers (AgenticSum, Asgari et al., Croxford et al., Fact-Controlled Diagnosis) have a public arXiv/DOI identifier. Finalize the cross-reference convention with 16's author. Decide `docs/uncalibrated-constants.md` authorship. Have `dev-tasks`/`dev-code` author the five files once approved.
+- **18** — Prompt smoke test against a real note with a diagnosis section: (a) confirm `diagnosis.details[]`/`reason_for_visit[]` items carry non-empty, plausible `source_fact_ids` in the pipeline's internal output; (b) confirm `changed_since_last_visit` and `changed_since_last_visit_fact_ids` always appear together, never one without the other; (c) confirm the diagnosis-vs-`low_priority` judgment call still tracks correctly now that `diagnosis.details` carries a citation obligation; (d) confirm the "What the Doctor Found" card still renders normally end-to-end for a well-behaved note.
+
+### Locked decisions — wave 3 additions (apply across 10-18, in addition to the locked decisions above)
+
+- Every new signal introduced in 10, 11, 12, and 14 is log-only and non-gating, with no patient-facing surface and no release gate — stated explicitly in each PRD's own Non-Goals, not merely assumed by omission.
+- 14 rejects `merged: bool` outright: an unverifiable model self-report does not earn its place over an already-free, guaranteed-recall signal (`len(source_fact_ids) > 1`) — the same standard PRD 02 already set for `file`/`page`. This is a deliberate rejection, recorded as such, not a silently-dropped feature.
+- 15, 16, and 17 are design-only: none of them rewrites a doc, edits a prompt, or touches application code (16 §4.6 specifies exactly one new, narrowly-scoped test file as its sole exception, not yet written) — `dev-tasks`/`dev-code` is the next step for all three once approved.
+- The clinical-fidelity evaluation suite remains out of scope everywhere in this wave too (10 §3, 11 §3, 17 §3) — PRD 05 §7.5's protocol is the only evaluation mechanism named anywhere in this batch, and it is still unrun.
+- No versioning, no migration (reiterated from the wave-1 locked decisions) — 12, 13, and 18 all mutate schemas in place. 12's GCS `JobInputPayload` shape change needs no dual-read path because the object's lifetime (per-job, deleted at completion, backstopped by a 1-day GCS lifecycle rule) makes a version-skew window inconsequential (12 §4.7).
+- PRD 16 documents the post-01-09 (currently-landed) state, not the post-10-18 state — 10-18's eventual landings are scoped as later, targeted amendments to an already-correct doc set, not a reason to wait (16 §4.0).
