@@ -5,9 +5,9 @@ import { trackEvent } from '../analytics/ga';
 export function downloadReport(carePlan: SimplifiedCarePlan, grading: Grading): void {
   trackEvent({ name: 'report_downloaded', params: {} });
   const html = buildPdfHtml(carePlan, grading, {
-    includeGlossary: false,
-    includeReadability: false,
-    includeLowPriority: false,
+    includeGlossary: true,
+    includeReadability: true,
+    includeLowPriority: true,
   });
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
