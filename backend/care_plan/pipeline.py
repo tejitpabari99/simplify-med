@@ -2,15 +2,16 @@
 care_plan/pipeline.py - The care_plan pipeline.
 
 Deterministic term detection (AHRQ + Michigan + abbreviations) via JSON,
-followed by one grounding step that extracts evidence-linked facts and one
-assembly step that renders them into a typed CarePlan.
+followed by four sequential LLM steps that ground, assemble+render,
+review, and correct the note into a typed CarePlan.
 
 Steps:
-  1. detect_terms
-  2. simplify_language
-  3. clarify_and_action
-  4. structure_document
-  5. postprocess
+  1. read_note (deterministic; OCR + unitization, outside this generator)
+  2. detect_terms (deterministic)
+  3. ground
+  4. assemble_and_render
+  5. review
+  6. correct (+ the deterministic close: citation-existence check, glossary re-detect)
 """
 
 import copy
@@ -18,6 +19,7 @@ import difflib
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Generator
 
@@ -37,7 +39,8 @@ from models.ledger import Fact, FactCategory, Unit
 from models.review import Correction, CoverageEntry, ReviewResult
 from utils.llm import LLMClient
 from utils.term_detection import (
-    build_glossary_from_simplified_text,
+    build_glossary_from_care_plan,      # 07 — replaces build_glossary_from_simplified_text
+    curate_glossary_terms,               # 07
     detect_terms,
     format_abbreviations_for_prompt,
     format_medical_terms_for_prompt,
@@ -805,6 +808,7 @@ class CarePlanPipeline:
     def iter_steps(
         self,
         text: str,
+        units: list[Unit],
         wrap_step: WrapStepFn | None = None,
     ) -> Generator[StepEvent | PipelineRunResult | PipelineStepError, None, None]:
         """
@@ -815,7 +819,10 @@ class CarePlanPipeline:
         unrecoverable step failure, yields PipelineStepError and returns.
 
         Args:
-            text:      Plain text to process.
+            text:      Plain text to process (still needed for deterministic term
+                       detection, glossary curation's "propose" job, and grounding's
+                       abbreviation block).
+            units:     The deterministic, per-line evidence units ground() cites into.
             wrap_step: Optional hook called as wrap_step(step_num, label, fn) and
                        must return fn(). The adapter uses this to attach Markers,
                        SimplifyContext, and tracing spans without the pipeline importing
@@ -827,92 +834,117 @@ class CarePlanPipeline:
                 return wrap_step(step, label, fn)
             return fn()
 
-        # Step 2: term detection (deterministic, no LLM)
+        # Step 2: term detection (deterministic, no LLM) — unchanged.
         yield StepEvent(step=_STEP.DETECT_TERMS.number, status="active", label=_STEP.DETECT_TERMS.label)
         try:
-            term_data = _call(
-                _STEP.DETECT_TERMS.number, _STEP.DETECT_TERMS.label,
-                lambda: detect_terms(text),
-            )
+            term_data = _call(_STEP.DETECT_TERMS.number, _STEP.DETECT_TERMS.label, lambda: detect_terms(text))
         except Exception:
             logger.exception("pipeline: term detection failed — continuing with empty terms")
-            term_data = {
-                "substitution_candidates": [],
-                "preserve_and_define_terms": [],
-                "abbreviations": [],
-            }
+            term_data = {"substitution_candidates": [], "preserve_and_define_terms": [], "abbreviations": []}
         yield StepEvent(step=_STEP.DETECT_TERMS.number, status="done", label=_STEP.DETECT_TERMS.label)
 
-        # Step 3: simplify language
-        yield StepEvent(step=_STEP.SIMPLIFY_LANGUAGE.number, status="active", label=_STEP.SIMPLIFY_LANGUAGE.label)
+        # Glossary curation starts here, on ITS OWN background thread, running
+        # alongside everything below (brief §3.1/§3.8) — see PRD §4.3 for why the
+        # LLMClient is constructed eagerly, on THIS thread, before submit().
         try:
-            simplified = _call(
-                _STEP.SIMPLIFY_LANGUAGE.number, _STEP.SIMPLIFY_LANGUAGE.label,
-                lambda: self.simplify_language_with_term_plan(
-                    text,
-                    term_data["substitution_candidates"],
-                    term_data["preserve_and_define_terms"],
-                    term_data["abbreviations"],
-                ),
-            )
-        except Exception as exc:
-            logger.exception("pipeline: simplification failed")
-            yield PipelineStepError(step=_STEP.SIMPLIFY_LANGUAGE.number, exc=exc)
-            return
-        yield StepEvent(step=_STEP.SIMPLIFY_LANGUAGE.number, status="done", label=_STEP.SIMPLIFY_LANGUAGE.label)
-
-        # Step 4: clarify and action
-        yield StepEvent(step=_STEP.CLARIFY_AND_ACTION.number, status="active", label=_STEP.CLARIFY_AND_ACTION.label)
-        try:
-            clarified = _call(
-                _STEP.CLARIFY_AND_ACTION.number, _STEP.CLARIFY_AND_ACTION.label,
-                lambda: self.clarify_and_action(simplified, term_data["abbreviations"]),
-            )
+            glossary_llm = LLMClient()
         except Exception:
-            logger.exception("pipeline: clarify step failed — using simplified text")
-            clarified = simplified   # non-fatal: fall back to simplified
-        yield StepEvent(step=_STEP.CLARIFY_AND_ACTION.number, status="done", label=_STEP.CLARIFY_AND_ACTION.label)
+            logger.exception("pipeline: could not construct glossary-curation LLM client")
+            glossary_llm = None
+        glossary_executor = ThreadPoolExecutor(max_workers=1)
+        glossary_future = glossary_executor.submit(
+            curate_glossary_terms, text, term_data["preserve_and_define_terms"], glossary_llm,
+        )
 
-        # Step 5: structure appointment note
-        yield StepEvent(step=_STEP.STRUCTURE_DOCUMENT.number, status="active", label=_STEP.STRUCTURE_DOCUMENT.label)
         try:
-            structured = _call(
-                _STEP.STRUCTURE_DOCUMENT.number, _STEP.STRUCTURE_DOCUMENT.label,
-                lambda: self.structure_appointment_note(clarified),
-            )
-        except Exception as exc:
-            logger.exception("pipeline: structuring failed")
-            yield PipelineStepError(step=_STEP.STRUCTURE_DOCUMENT.number, exc=exc)
-            return
-        yield StepEvent(step=_STEP.STRUCTURE_DOCUMENT.number, status="done", label=_STEP.STRUCTURE_DOCUMENT.label)
+            # Step 3: grounding (LLM, FATAL — no fallback exists, PRD 03 §4.6)
+            yield StepEvent(step=_STEP.GROUND.number, status="active", label=_STEP.GROUND.label)
+            try:
+                facts = _call(_STEP.GROUND.number, _STEP.GROUND.label,
+                               lambda: self.ground(units, term_data["abbreviations"]))
+            except Exception as exc:
+                logger.exception("pipeline: grounding failed")
+                yield PipelineStepError(step=_STEP.GROUND.number, exc=exc)
+                return
+            yield StepEvent(step=_STEP.GROUND.number, status="done", label=_STEP.GROUND.label)
 
-        terms_glossary = build_glossary_from_simplified_text(
-            clarified, term_data["preserve_and_define_terms"]
-        )
-        # Stop-gap: the CarePlan schema no longer has a `raw` field (PRD 01
-        # removed it and rejects unknown fields), so it can't be included
-        # here. PRD 06 will rewire this function; until then we still keep
-        # the `text`/`simplified`/`clarified` locals since they're used
-        # below in the yielded PipelineRunResult.
-        result = {
-            **structured,
-            "terms": terms_glossary,
-        }
-        care_plan = CarePlan.from_pipeline_result(result)
-        if not isinstance(care_plan, CarePlan):
-            raise TypeError(f"Expected CarePlan, got {type(care_plan).__name__}")
+            # Step 4: assemble + render (LLM, FATAL — PRD 04 §4.5)
+            yield StepEvent(step=_STEP.ASSEMBLE_AND_RENDER.number, status="active", label=_STEP.ASSEMBLE_AND_RENDER.label)
+            try:
+                care_plan = _call(
+                    _STEP.ASSEMBLE_AND_RENDER.number, _STEP.ASSEMBLE_AND_RENDER.label,
+                    lambda: self.assemble_and_render(
+                        facts, term_data["substitution_candidates"],
+                        term_data["preserve_and_define_terms"], term_data["abbreviations"],
+                    ),
+                )
+            except Exception as exc:
+                logger.exception("pipeline: assemble_and_render failed")
+                yield PipelineStepError(step=_STEP.ASSEMBLE_AND_RENDER.number, exc=exc)
+                return
+            yield StepEvent(step=_STEP.ASSEMBLE_AND_RENDER.number, status="done", label=_STEP.ASSEMBLE_AND_RENDER.label)
 
-        yield PipelineRunResult(
-            care_plan=care_plan,
-            term_data=term_data,
-            simplified=simplified,
-            clarified=clarified,
-            raw_text=text,
-        )
+            # Step 5: review (LLM, NON-FATAL — PRD 05 §4.8: a fidelity nit must
+            # never cost the user their whole result)
+            yield StepEvent(step=_STEP.REVIEW.number, status="active", label=_STEP.REVIEW.label)
+            try:
+                review_result = _call(_STEP.REVIEW.number, _STEP.REVIEW.label,
+                                       lambda: self.review(facts, care_plan))
+            except Exception:
+                logger.exception("pipeline: review failed — skipping correction, shipping assembly's output")
+                review_result = None
+            yield StepEvent(step=_STEP.REVIEW.number, status="done", label=_STEP.REVIEW.label)
 
-    def run(self, text: str) -> CarePlan:
+            # Step 6: correct (LLM, NON-FATAL) + the deterministic close.
+            # Bundled under one progress-bar step deliberately (PRD §4.1) — none of
+            # what happens here is something a patient needs itemized.
+            yield StepEvent(step=_STEP.CORRECT.number, status="active", label=_STEP.CORRECT.label)
+            if review_result and review_result.corrections:
+                try:
+                    care_plan = _call(
+                        _STEP.CORRECT.number, _STEP.CORRECT.label,
+                        lambda: self.correct(
+                            care_plan, review_result.corrections,
+                            term_data["substitution_candidates"],
+                            term_data["preserve_and_define_terms"], term_data["abbreviations"],
+                        ),
+                    )
+                except Exception:
+                    logger.exception("pipeline: correct failed or was rejected by the diff check — "
+                                      "falling back to the pre-correction care plan")
+                    # care_plan is left exactly as assemble_and_render returned it.
+
+            # Deterministic close (PRD §4.10): glossary re-detection is the only
+            # step left here. The citation-existence check that used to need
+            # ordering against it — the direct replacement for the deleted
+            # close_coverage — is already enforced by 04, inline inside
+            # assemble_and_render, before review()/correct() even run (PRD 04
+            # §4.4). There is no separate call for iter_steps to make.
+            try:
+                curated_terms = glossary_future.result(
+                    timeout=Constants.Deadlines.GLOSSARY_CURATION_TIMEOUT_S
+                )
+            except Exception:
+                logger.exception("pipeline: glossary curation did not finish in time — using uncurated terms")
+                curated_terms = term_data["preserve_and_define_terms"]
+
+            glossary = build_glossary_from_care_plan(care_plan, curated_terms)
+            care_plan = care_plan.model_copy(update={"terms": glossary})
+
+            yield StepEvent(step=_STEP.CORRECT.number, status="done", label=_STEP.CORRECT.label)
+        finally:
+            # Always runs — early `return` on a fatal step, an exception
+            # propagating out, or normal completion all hit this. wait=False:
+            # if curation is still running past its own timeout above, let it
+            # finish in the background rather than block job completion on it
+            # a second time (PRD §4.3).
+            glossary_executor.shutdown(wait=False)
+
+        yield PipelineRunResult(care_plan=care_plan, term_data=term_data, raw_text=text)
+
+    def run(self, text: str, units: list[Unit]) -> CarePlan:
         """Run the full pipeline without instrumentation. Used in tests and batch pre-checks."""
-        for event in self.iter_steps(text):
+        for event in self.iter_steps(text, units):
             if isinstance(event, PipelineRunResult):
                 return event.care_plan
             if isinstance(event, PipelineStepError):
