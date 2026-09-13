@@ -5,7 +5,10 @@ import userEvent from '@testing-library/user-event';
 const deleteJobMock = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../api/api', () => ({ deleteJob: (...a: unknown[]) => deleteJobMock(...a) }));
 const downloadReportMock = vi.fn();
-vi.mock('../../utils/downloadReport', () => ({ downloadReport: (...a: unknown[]) => downloadReportMock(...a) }));
+vi.mock('../../utils/downloadReport', () => ({
+  downloadReport: (...a: unknown[]) => downloadReportMock(...a),
+  DownloadReportError: class DownloadReportError extends Error {},
+}));
 vi.mock('../../analytics/ga', () => ({ trackEvent: vi.fn() }));
 
 import ResultScreen from '../../components/ResultScreen';
@@ -91,6 +94,23 @@ describe('ResultScreen', () => {
     render(<ResultScreen jobDoc={completedJobDoc} jobId="job-1" deletedRef={deletedRef} onRestart={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Download report' }));
     expect(downloadReportMock).toHaveBeenCalledOnce();
+  });
+
+  it('shows an inline error instead of failing silently when downloadReport throws', async () => {
+    const user = userEvent.setup();
+    downloadReportMock.mockImplementation(() => {
+      throw new Error('buildPdfHtml blew up on malformed data');
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<ResultScreen jobDoc={completedJobDoc} jobId="job-1" deletedRef={deletedRef} onRestart={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Download report' }));
+
+    expect(screen.getByText('Something went wrong preparing your report. Please try again.')).toBeInTheDocument();
+    // The raw error text must never reach the page.
+    expect(screen.queryByText(/blew up/)).not.toBeInTheDocument();
+    downloadReportMock.mockReset();
+    consoleErrorSpy.mockRestore();
   });
 
   it('renders a full realistic backend payload (with terms glossary + medications + warning signs) without throwing', () => {

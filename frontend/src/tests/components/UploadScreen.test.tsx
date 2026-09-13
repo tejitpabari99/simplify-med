@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const createJobMock = vi.fn();
@@ -13,7 +13,13 @@ function makeFile(name: string, type = 'text/plain') {
 }
 
 describe('UploadScreen', () => {
-  beforeEach(() => createJobMock.mockReset());
+  // Braces (not an expression body) so this hook doesn't return a value: an
+  // arrow returning `createJobMock.mockReset()` returns the mock itself (a
+  // function) -- Vitest reads a hook returning a function as an "on teardown"
+  // callback and invokes it after each test using whatever implementation is
+  // then active, which hangs for the full hookTimeout if that implementation
+  // is a still-pending Promise (as in the double-submit test below).
+  beforeEach(() => { createJobMock.mockReset(); });
 
   it('disables Simplify while authState is not ready', () => {
     render(<UploadScreen authState="pending" onAuthRetry={vi.fn()} onJobCreated={vi.fn()} />);
@@ -94,6 +100,28 @@ describe('UploadScreen', () => {
     await user.click(button);
 
     expect(createJobMock).toHaveBeenCalledOnce();
+    expect(onJobCreated).toHaveBeenCalledWith('job-1');
+  });
+
+  it('guards against a double-submit calling createJob twice when two clicks land before the button disables', async () => {
+    let resolveJob!: (v: { job_id: string }) => void;
+    createJobMock.mockImplementation(() => new Promise(resolve => { resolveJob = resolve; }));
+    const onJobCreated = vi.fn();
+    const user = userEvent.setup();
+    render(<UploadScreen authState="ready" onAuthRetry={vi.fn()} onJobCreated={onJobCreated} />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, makeFile('note.txt'));
+    const button = screen.getByRole('button', { name: 'Simplify' });
+
+    // Two synchronous clicks in the same tick, before React has a chance to
+    // commit the `disabled` update from the first click's setSubmitting(true).
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    expect(createJobMock).toHaveBeenCalledOnce();
+
+    await act(async () => { resolveJob({ job_id: 'job-1' }); });
+    expect(onJobCreated).toHaveBeenCalledOnce();
     expect(onJobCreated).toHaveBeenCalledWith('job-1');
   });
 });
