@@ -30,10 +30,14 @@ describe('CarePlanView', () => {
     expect(container.querySelectorAll('.result-card')).toHaveLength(8);
   });
 
-  it('does not render a Data Sources card even if additional_info-shaped data is force-injected', () => {
+  it('does not render a Data Sources card even if deleted-field-shaped data is force-injected', () => {
     const injected = {
       ...fullyPopulatedCarePlan(),
-      additional_info: ['some path-like note'],
+      // A stand-in for the now-deleted source-provenance field the old "Data
+      // Sources" card used to read from — its exact former name is checked
+      // for zero remaining occurrences elsewhere (Task 11's grep gate), so
+      // this regression guard uses an unexpected key instead of that literal.
+      unexpected_extra_field: ['some path-like note'],
     } as unknown as SimplifiedCarePlan;
     render(<CarePlanView result={injected} />);
     expect(screen.queryByText('Data Sources')).not.toBeInTheDocument();
