@@ -93,11 +93,7 @@ def test_run_returns_care_plan_model_without_internal_scores(monkeypatch):
 
     assert isinstance(care_plan, CarePlan)
     data = care_plan.model_dump(mode="json")
-    assert data["raw"] == {
-        "text": "original note",
-        "simplified_text": "simplified",
-        "clarified_text": "clarified",
-    }
+    assert "raw" not in data
     assert "before_score" not in data
     assert "after_score" not in data
 

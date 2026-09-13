@@ -236,14 +236,14 @@ class CarePlanPipeline:
         terms_glossary = build_glossary_from_simplified_text(
             clarified, term_data["preserve_and_define_terms"]
         )
+        # Stop-gap: the CarePlan schema no longer has a `raw` field (PRD 01
+        # removed it and rejects unknown fields), so it can't be included
+        # here. PRD 06 will rewire this function; until then we still keep
+        # the `text`/`simplified`/`clarified` locals since they're used
+        # below in the yielded PipelineRunResult.
         result = {
             **structured,
             "terms": terms_glossary,
-            "raw": {
-                "text": text,
-                "simplified_text": simplified,
-                "clarified_text": clarified,
-            },
         }
         care_plan = CarePlan.from_pipeline_result(result)
         if not isinstance(care_plan, CarePlan):
