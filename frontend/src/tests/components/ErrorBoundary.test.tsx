@@ -17,7 +17,7 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('All good')).toBeInTheDocument();
   });
 
-  it('catches a throwing child, shows the fallback with the error text, and never renders nothing', () => {
+  it('catches a throwing child, shows a generic fallback, and never renders nothing', () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { container } = render(
       <ErrorBoundary title="Custom title">
@@ -26,8 +26,28 @@ describe('ErrorBoundary', () => {
     );
     expect(container).not.toBeEmptyDOMElement();
     expect(screen.getByText('Custom title')).toBeInTheDocument();
-    expect(screen.getByText('boom from child')).toBeInTheDocument();
+    expect(screen.getByText(/unexpected error occurred/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start over' })).toBeInTheDocument();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('never renders the raw caught error message — only a generic message reaches the user', () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(
+      <ErrorBoundary>
+        <Bomb />
+      </ErrorBoundary>,
+    );
+    // "boom from child" is Bomb's raw Error.message — an internal/unexpected
+    // failure like this must never be echoed into the DOM (stack traces, raw
+    // exception text, etc. are exactly what the owner requirement forbids).
+    expect(screen.queryByText(/boom from child/)).not.toBeInTheDocument();
+    // The real error still reaches the console for diagnostics.
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      'ErrorBoundary caught an error:',
+      expect.objectContaining({ message: 'boom from child' }),
+      expect.anything(),
+    );
     consoleErrorSpy.mockRestore();
   });
 

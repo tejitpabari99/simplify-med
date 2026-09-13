@@ -49,25 +49,30 @@ export function buildNextStepsRows(carePlan: CarePlanContent): NextStepRow[] {
   const withTitle = (t: { plain_name?: string; title: string }) =>
     t.plain_name ? `${t.plain_name} (${t.title})` : t.title;
 
+  // Each source array is only a TypeScript contract, not a runtime guarantee — a
+  // partial/malformed backend write can leave any of these `null` instead of `[]`.
+  // Default defensively here rather than letting a single missing array crash the
+  // whole Next Steps list (and, via buildPdfHtml, the report download) for an
+  // otherwise-fine result.
   const rows: NextStepRow[] = [
-    ...carePlan.medications.map((m): NextStepRow => ({
+    ...(carePlan.medications ?? []).map((m): NextStepRow => ({
       type: 'medication', status: m.status, title: withTitle(m), why: m.why,
       detail: joinDetail(m.dosage, m.frequency, m.timing, m.duration),
       change: m.change,
     })),
-    ...carePlan.tests.map((t): NextStepRow => ({
+    ...(carePlan.tests ?? []).map((t): NextStepRow => ({
       type: 'test', status: t.status, title: withTitle(t), why: t.why,
       detail: joinDetail(t.description, t.preparation),
     })),
-    ...carePlan.procedures.map((p): NextStepRow => ({
+    ...(carePlan.procedures ?? []).map((p): NextStepRow => ({
       type: 'procedure', status: p.status, title: withTitle(p), why: p.why,
       detail: joinDetail(p.what_to_expect, p.timeframe),
     })),
-    ...carePlan.follow_up.map((f): NextStepRow => ({
+    ...(carePlan.follow_up ?? []).map((f): NextStepRow => ({
       type: 'follow_up', status: f.status, title: f.description,
       detail: joinDetail(f.time_frame),
     })),
-    ...carePlan.other.map((o): NextStepRow => ({
+    ...(carePlan.other ?? []).map((o): NextStepRow => ({
       type: 'other', status: o.status, title: o.title, why: o.why, steps: o.steps,
       detail: joinDetail(o.description, o.frequency, o.duration),
     })),

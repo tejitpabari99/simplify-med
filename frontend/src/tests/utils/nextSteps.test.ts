@@ -127,6 +127,19 @@ describe('buildNextStepsRows', () => {
     expect(rows[0].change).toBe('');
   });
 
+  it('does not throw when a source array is null instead of [] (partial/malformed backend write)', () => {
+    const carePlan = {
+      ...baseCarePlan({ tests: [testItem()] }),
+      medications: null,
+      procedures: null,
+      follow_up: null,
+      other: null,
+    } as unknown as CarePlanContent;
+    const rows = buildNextStepsRows(carePlan);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type).toBe('test');
+  });
+
   it('non-medication rows never populate change', () => {
     const carePlan = baseCarePlan({
       tests: [testItem()],
