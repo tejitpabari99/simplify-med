@@ -624,6 +624,21 @@ def _verify_correction_diff(before: CarePlan, after: CarePlan, corrections: list
         _diff_item(before_d[field], after_d[field], field, named, removed_by_array)
 
 
+def _validation_error_detail(e: ValidationError) -> str:
+    """PHI-free detail string for a Pydantic ValidationError on LLM
+    structured output. `str(e)` (and its `.msg`/`.input_value` fields)
+    embeds the actual invalid value pydantic rejected -- for these four
+    call sites that value is patient-derived clinical text pulled
+    straight from the LLM's structured response, so it must never reach
+    `SimplifyError.detail` (which flows into Firestore `error_data.details`,
+    a field the frontend's live listener reads). Uses only each error's
+    `loc` (the field path) and `type` (the validator name) -- structural
+    metadata about *where* validation failed, never the value itself."""
+    return "; ".join(
+        f"{'.'.join(map(str, err['loc']))}: {err['type']}" for err in e.errors()
+    )
+
+
 class CarePlanPipeline:
     """Care plan pipeline with deterministic term detection."""
 
@@ -686,7 +701,7 @@ class CarePlanPipeline:
             try:
                 drafts.append(_GroundedFactRaw.model_validate(item))
             except ValidationError as e:
-                raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
+                raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=_validation_error_detail(e), original=e)
 
         verified = _verify_ledger(drafts, units)
         if not verified:
@@ -737,7 +752,7 @@ class CarePlanPipeline:
         try:
             model = CarePlan.model_validate(raw)
         except ValidationError as e:
-            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
+            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=_validation_error_detail(e), original=e)
 
         return _verify_assembly(model, facts)
 
@@ -761,7 +776,7 @@ class CarePlanPipeline:
         try:
             result = ReviewResult.model_validate(raw)
         except ValidationError as e:
-            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
+            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=_validation_error_detail(e), original=e)
 
         return _sanitize_review_result(result, care_plan, facts)
 
@@ -797,7 +812,7 @@ class CarePlanPipeline:
         try:
             corrected = CarePlan.model_validate(raw)
         except ValidationError as e:
-            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=str(e), original=e)
+            raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=_validation_error_detail(e), original=e)
 
         _verify_correction_diff(care_plan, corrected, corrections)   # raises on violation
         return corrected

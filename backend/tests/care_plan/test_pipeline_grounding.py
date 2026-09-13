@@ -471,3 +471,32 @@ def test_ground_raises_when_verified_ledger_is_empty():
 
     assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
     assert "zero" in exc_info.value.detail.lower() or "empty" in exc_info.value.detail.lower()
+
+
+def test_ground_validation_error_detail_excludes_patient_content():
+    """Finding 1b regression: when the grounding LLM's structured output
+    fails Pydantic validation, `_GroundedFactRaw`'s ValidationError embeds
+    the actual rejected value (`str(e)`'s `input_value=...`) -- here, a
+    patient-derived marker standing in for real clinical text sent back by
+    the LLM in an invalid field. The raised SimplifyError.detail must never
+    contain it (it flows into Firestore error_data.details, which the
+    frontend's live listener reads); it must be built only from each
+    error's structural `loc`/`type` (see `_validation_error_detail`)."""
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    units = [
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily"),
+    ]
+    marker = "PATIENT_MARKER_XYZ"
+    pipeline._generate_json = lambda *args, **kwargs: [
+        # `category` only accepts a fixed set of Literal values, so an
+        # arbitrary string fails Pydantic validation with the marker
+        # embedded verbatim as the error's `input_value`.
+        {"category": marker, "unit_id": 1, "quote": "warfarin 5mg", "text": "note text"},
+    ]
+
+    with pytest.raises(SimplifyError) as exc_info:
+        pipeline.ground(units, [])
+
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+    assert marker not in exc_info.value.detail
+    assert "category" in exc_info.value.detail

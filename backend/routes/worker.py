@@ -137,7 +137,7 @@ def execute_job(job_id: str):
             def _check_timeout(stage: int) -> bool:
                 elapsed = time.monotonic() - start
                 if elapsed > deadline_s:
-                    fail_job(job_id, build_error_data(ErrorCode.JOB_TIMEOUT, f"Job timed out at stage {stage}"))
+                    fail_job(job_id, build_error_data(ErrorCode.JOB_TIMEOUT, stage=stage))
                     logger.warning("worker: job %s timed out at stage %d after %.1fs", job_id, stage, elapsed)
                     return True
                 return False
