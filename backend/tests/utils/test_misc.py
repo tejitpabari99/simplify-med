@@ -14,9 +14,15 @@ def test_rfv_reason_title_cased():
 
 
 def test_diagnosis_fallback():
-    data = {"reason_for_visit": [], "diagnosis": {"main_conclusion": "Hypertension. More details."}}
+    data = {"reason_for_visit": [], "diagnosis": {"details": [{"plain_name": "Hypertension"}]}}
     result = derive_output_name(data)
     assert result == "Hypertension"
+
+
+def test_diagnosis_title_fallback():
+    data = {"reason_for_visit": [], "diagnosis": {"details": [{"title": "Hypertension Diagnosis"}]}}
+    result = derive_output_name(data)
+    assert result == "Hypertension Diagnosis"
 
 
 def test_filename_fallback():
