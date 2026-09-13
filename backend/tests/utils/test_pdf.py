@@ -51,27 +51,38 @@ def test_merge_pdfs_raises_when_no_pages_are_mergeable(caplog):
 
 
 def test_extract_text_from_two_page_pdf():
-    from utils.pdf import extract_text_from_pdf
+    from utils.pdf import extract_pages_from_pdf
 
     pdf_bytes = _make_pdf(["First page content", "Second page content"])
-    result = extract_text_from_pdf(pdf_bytes)
-    assert "First page content" in result
-    assert "Second page content" in result
+    pages = extract_pages_from_pdf(pdf_bytes)
+
+    assert len(pages) == 2
+    assert pages[0][0] == 1
+    assert pages[1][0] == 2
+    assert "First page content" in pages[0][1]
+    assert "Second page content" in pages[1][1]
 
 
-def test_extract_text_from_empty_pdf_returns_empty_string():
-    from utils.pdf import extract_text_from_pdf
+def test_extract_pages_from_pdf_blank_page_returns_empty_list():
+    from utils.pdf import extract_pages_from_pdf
     import PyPDF2
 
-    # Build a valid PDF with one blank page (no text)
     writer = PyPDF2.PdfWriter()
     writer.add_blank_page(width=612, height=792)
     buffer = io.BytesIO()
     writer.write(buffer)
     pdf_bytes = buffer.getvalue()
 
-    result = extract_text_from_pdf(pdf_bytes)
-    assert result == ""
+    assert extract_pages_from_pdf(pdf_bytes) == []
+
+
+def test_extract_pages_from_pdf_page_numbers_are_one_indexed_in_document_order():
+    from utils.pdf import extract_pages_from_pdf
+
+    pdf_bytes = _make_pdf(["Alpha", "Beta", "Gamma"])
+    pages = extract_pages_from_pdf(pdf_bytes)
+
+    assert [p[0] for p in pages] == [1, 2, 3]
 
 
 def _pillow_heif_available() -> bool:
