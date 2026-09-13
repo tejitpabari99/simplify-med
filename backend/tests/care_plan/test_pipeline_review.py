@@ -12,7 +12,7 @@ from care_plan.pipeline import (
     _sanitize_review_result,
     _targets_removed_item,
 )
-from models.care_plan.care_plan import CarePlan, Medication
+from models.care_plan.care_plan import CarePlan, Diagnosis, DiagnosisDetail, Medication
 from models.ledger import Fact
 from models.review import Correction, CoverageEntry, ReviewResult
 
@@ -210,6 +210,51 @@ def test_targets_removed_item_matches_leading_array_segment():
     assert _targets_removed_item("medications[0].dosage", {"medications[0]"}) is True
     assert _targets_removed_item("medications[1].dosage", {"medications[0]"}) is False
     assert _targets_removed_item("summary", {"medications[0]"}) is False
+
+
+def test_targets_removed_item_matches_nested_dotted_array_path():
+    """Finding 2 regression: a removed item at a dotted, nested array path
+    (e.g. `diagnosis.details[0]`, not a bare top-level `array[N]`) must
+    still match a path naming a field on that same item
+    (`diagnosis.details[0].description`) -- the old anchored regex
+    (`^[a-zA-Z_][a-zA-Z0-9_]*\\[\\d+\\]`) only ever matched an UNDOTTED
+    leading segment and so silently never matched here."""
+    assert _targets_removed_item("diagnosis.details[0].description", {"diagnosis.details[0]"}) is True
+    assert _targets_removed_item("diagnosis.details[0]", {"diagnosis.details[0]"}) is True
+    # A different index under the same dotted array must NOT match --
+    # nor should numeric-prefix collisions ([1] vs [10]) be conflated.
+    assert _targets_removed_item("diagnosis.details[1].description", {"diagnosis.details[0]"}) is False
+    assert _targets_removed_item("diagnosis.details[10]", {"diagnosis.details[1]"}) is False
+    assert _targets_removed_item("diagnosis.details[1]", {"diagnosis.details[10]"}) is False
+
+
+def test_sanitize_remove_wins_over_correct_on_same_nested_item():
+    """Finding 2 regression, exercised through _sanitize_review_result
+    (mirrors test_sanitize_remove_wins_over_correct_on_same_item, but with
+    a dotted nested array path): a `remove` on `diagnosis.details[0]` must
+    still suppress a `correct` targeting `diagnosis.details[0].description`."""
+    care_plan = CarePlan(
+        summary="You came in for care.",
+        diagnosis=Diagnosis(
+            details=[
+                DiagnosisDetail(title="Hypertension", description="High blood pressure."),
+                DiagnosisDetail(title="Diabetes", description="Type 2 diabetes."),
+            ],
+        ),
+    )
+    result = ReviewResult(
+        verdict="needs_correction",
+        corrections=[
+            Correction(op="remove", path="diagnosis.details[0]"),
+            Correction(op="correct", path="diagnosis.details[0].description", value="Updated text."),
+        ],
+    )
+
+    sanitized = _sanitize_review_result(result, care_plan, _facts(1))
+
+    assert len(sanitized.corrections) == 1
+    assert sanitized.corrections[0].op == "remove"
+    assert sanitized.corrections[0].path == "diagnosis.details[0]"
 
 
 # ---------------------------------------------------------------------------

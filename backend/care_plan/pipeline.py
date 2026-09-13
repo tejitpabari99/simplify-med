@@ -450,14 +450,22 @@ _WHY_PATH_RE = re.compile(r"^(medications|tests|procedures|other)\[\d+\]\.why$")
 
 
 def _targets_removed_item(path: str, removed_items: set[str]) -> bool:
-    """True if `path`'s leading `array[N]` segment matches one of the
-    `removed_items` path strings -- i.e. a `correct`/`not_stated` targeting
-    a field of an item some other correction already `remove`s (PRD 05
-    §4.5's contradiction guard: remove wins)."""
-    m = re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*\[\d+\]", path)
-    if not m:
-        return False
-    return m.group(0) in removed_items
+    """True if `path` names one of the `removed_items` paths itself, or a
+    field nested (at any depth) under one -- i.e. a `correct`/`not_stated`
+    targeting a field of an item some other correction already `remove`s
+    (PRD 05 §4.5's contradiction guard: remove wins).
+
+    Removed-item paths are full dotted prefixes, not necessarily a single
+    top-level `array[N]` segment -- `diagnosis.details[0]` is as valid a
+    removed item as `medications[0]`. A path is "under" a removed item
+    only when it continues with a `.` or `[` boundary right after the
+    removed prefix (`diagnosis.details[1]` must NOT match a removed
+    `diagnosis.details[10]`, nor vice versa -- plain prefix matching
+    would conflate them)."""
+    return any(
+        path == removed or path.startswith(removed + ".") or path.startswith(removed + "[")
+        for removed in removed_items
+    )
 
 
 def _sanitize_review_result(result: ReviewResult, care_plan: CarePlan, facts: list[Fact]) -> ReviewResult:
