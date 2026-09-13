@@ -45,6 +45,6 @@ CLINICAL NOTE:
 {source_text}
 
 Return JSON only, matching this schema. No markdown, no commentary.
-{"drop": ["<term>", ...], "propose": [{"matched_term": "<exact word or phrase from the note>", "definition": "<one or two plain sentences>"}]}
+{{"drop": ["<term>", ...], "propose": [{{"matched_term": "<exact word or phrase from the note>", "definition": "<one or two plain sentences>"}}]}}
 
 JSON OUTPUT:
