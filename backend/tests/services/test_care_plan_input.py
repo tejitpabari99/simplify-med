@@ -5,20 +5,25 @@ Covers the dot-less-filename edge case: extension parsing must fail cleanly with
 a SimplifyError rather than raising an unhandled IndexError from rsplit(".", 1)[1].
 """
 import io
-from unittest.mock import patch
+import json
+import re
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
+from google.api_core.exceptions import NotFound
 
 from services.care_plan_input import (
     extract_pages_from_bytes,
     is_allowed_extension,
+    load_job_input,
     resolve_uploaded_files,
-    resolve_units_from_job_doc,
     upload_combined_pdf,
+    upload_job_input,
     validate_extracted_text_length,
 )
-from services.unitizer import unitize
 from errors import ErrorCode, SimplifyError
+from models.provenance import JobInputPayload, SourceSpan
 from utils.constants import Constants
 
 # A minimal, valid 1x1 PNG (no network, no fixture file needed).
@@ -138,6 +143,94 @@ def test_upload_combined_pdf_uses_care_plan_inputs_gcs_path(mock_get_gcs_bucket,
 def test_upload_combined_pdf_raises_when_bucket_not_configured():
     with pytest.raises(RuntimeError, match="GCP_BUCKET_NAME"):
         upload_combined_pdf(b"%PDF", "user-1")
+
+
+@patch.dict("services.care_plan_input.os.environ", {"GCP_BUCKET_NAME": "bucket"})
+@patch("services.care_plan_input.get_gcs_bucket")
+def test_upload_job_input_writes_json_with_text_and_provenance(mock_get_gcs_bucket):
+    text = "First line\nSecond line"
+    provenance = [SourceSpan(file="notes.txt", page=1, start_line=0, end_line=1)]
+    blob = MagicMock()
+    mock_get_gcs_bucket.return_value.blob.return_value = blob
+
+    uri = upload_job_input(text, provenance, "user-1")
+
+    assert re.fullmatch(
+        r"gs://bucket/care_plan_inputs/user-1/inputs/"
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json",
+        uri,
+    )
+    mock_get_gcs_bucket.assert_called_once_with("bucket")
+    mock_get_gcs_bucket.return_value.blob.assert_called_once_with(
+        uri.removeprefix("gs://bucket/")
+    )
+    uploaded_json = blob.upload_from_string.call_args.args[0]
+    assert json.loads(uploaded_json) == {
+        "text": text,
+        "provenance": [span.to_dict() for span in provenance],
+    }
+    assert blob.upload_from_string.call_args.kwargs == {"content_type": "application/json"}
+
+
+@patch.dict("services.care_plan_input.os.environ", {}, clear=True)
+def test_upload_job_input_raises_if_bucket_env_var_missing():
+    with pytest.raises(RuntimeError, match="GCP_BUCKET_NAME"):
+        upload_job_input("hello", [], "user-1")
+
+
+@patch("services.care_plan_input.download_gcs_string")
+def test_load_job_input_happy_path(mock_download):
+    spans = [SourceSpan(file="notes.txt", page=1, start_line=0, end_line=0)]
+    mock_download.return_value = json.dumps(JobInputPayload(text="hello", provenance=spans).to_dict())
+    job = SimpleNamespace(input_payload_gcs_uri="gs://bucket/input.json")
+
+    text, provenance = load_job_input(job)
+
+    assert text == "hello"
+    assert provenance == spans
+    mock_download.assert_called_once_with("gs://bucket/input.json")
+
+
+def test_load_job_input_raises_pipeline_error_when_gcs_uri_is_missing():
+    job = SimpleNamespace(input_payload_gcs_uri=None)
+
+    with pytest.raises(SimplifyError) as exc_info:
+        load_job_input(job)
+
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_ERROR
+
+
+@patch("services.care_plan_input.download_gcs_string", side_effect=NotFound("missing"))
+def test_load_job_input_raises_pipeline_error_on_not_found(mock_download):
+    job = SimpleNamespace(input_payload_gcs_uri="gs://bucket/missing.json")
+
+    with pytest.raises(SimplifyError) as exc_info:
+        load_job_input(job)
+
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_ERROR
+    mock_download.assert_called_once_with("gs://bucket/missing.json")
+
+
+@patch("services.care_plan_input.download_gcs_string", return_value="not json")
+def test_load_job_input_raises_pipeline_error_on_malformed_json(mock_download):
+    job = SimpleNamespace(input_payload_gcs_uri="gs://bucket/input.json")
+
+    with pytest.raises(SimplifyError) as exc_info:
+        load_job_input(job)
+
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_ERROR
+    mock_download.assert_called_once_with("gs://bucket/input.json")
+
+
+@patch("services.care_plan_input.download_gcs_string", return_value="{}")
+def test_load_job_input_raises_pipeline_error_on_schema_mismatch(mock_download):
+    job = SimpleNamespace(input_payload_gcs_uri="gs://bucket/input.json")
+
+    with pytest.raises(SimplifyError) as exc_info:
+        load_job_input(job)
+
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_ERROR
+    mock_download.assert_called_once_with("gs://bucket/input.json")
 
 
 @patch("services.care_plan_input.extract_text_from_image")
@@ -346,8 +439,7 @@ def test_resolve_uploaded_files_rejects_extracted_text_containing_lone_surrogate
 
 
 # ---------------------------------------------------------------------------
-# SourceSpan provenance (PRD 02 §4.7) -- resolve_uploaded_files/
-# resolve_units_from_job_doc
+# SourceSpan provenance (PRD 02 §4.7) -- resolve_uploaded_files
 # ---------------------------------------------------------------------------
 
 def test_resolve_uploaded_files_single_file_produces_one_span_per_page():
@@ -399,23 +491,3 @@ def test_resolve_uploaded_files_omits_source_separator_marker_from_combined_text
     good = _FakeUpload("good.txt", b"This is a perfectly good clinical note.")
     resolved, _ = _resolve([good])
     assert "--- Source:" not in resolved.text
-
-
-def test_resolve_units_from_job_doc_round_trips_through_a_job_doc_shaped_object():
-    """Build a minimal job-doc-shaped object with input_text/input_provenance
-    from a real resolve_uploaded_files() call; resolve_units_from_job_doc
-    must produce exactly what calling unitize() directly on the same
-    (text, provenance) pair produces -- no loss or reordering through the
-    JobDoc-shaped round trip."""
-    pdf_bytes = _make_pdf(["First page content", "Second page content"])
-    fake_upload = _FakeUpload("doc.pdf", pdf_bytes)
-    resolved, _ = _resolve([fake_upload])
-
-    class _FakeJobDoc:
-        def __init__(self, input_text, input_provenance):
-            self.input_text = input_text
-            self.input_provenance = input_provenance
-
-    job = _FakeJobDoc(input_text=resolved.text, input_provenance=resolved.provenance)
-
-    assert resolve_units_from_job_doc(job) == unitize(resolved.text, resolved.provenance)
