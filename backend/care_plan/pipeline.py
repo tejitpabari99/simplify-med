@@ -468,7 +468,9 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
         if changed:
             updates[field] = kept
 
-    return model.model_copy(update=updates) if updates else model
+    result = model.model_copy(update=updates) if updates else model
+    _check_numeric_parity(result, facts)   # PRD 10 R3 -- log-only, never mutates `result`
+    return result
 
 
 _UNIT_WORD_MAX_LENGTH = 15  # reasoned, not calibrated (PRD 10 §4.2): long enough
@@ -556,6 +558,83 @@ def _extract_number_tokens(text: str) -> set[tuple[str, str]]:
             num_norm = _normalize_number(num)
         tokens.add((num_norm, unit))
     return tokens
+
+
+_NUMERIC_PARITY_FIELDS: dict[str, tuple[str, ...]] = {
+    "medications": ("title", "plain_name", "why", "dosage", "frequency",
+                     "timing", "duration", "instructions",
+                     "side_effects_to_watch", "change"),
+    "tests": ("title", "plain_name", "why", "description", "preparation"),
+    "procedures": ("title", "plain_name", "why", "what_to_expect", "timeframe"),
+    "other": ("title", "why", "description", "frequency", "duration"),  # steps[] handled separately
+    "follow_up": ("time_frame", "description"),
+    "warning_signs": ("symptom", "what_it_might_mean", "what_to_do", "related_to"),
+}
+
+
+def _check_numeric_parity(model: CarePlan, facts: list[Fact]) -> None:
+    """R3 (PRD 10 §4.3/§4.4): log-only, model-free check that every number
+    a rendered field states was present in at least one fact the item
+    cites. Never mutates or drops anything -- unlike the citation-existence
+    guards above it, a numeric mismatch has no safe deterministic repair
+    (which side is right is exactly the judgement call this check cannot
+    make), so logging is this PRD's entire, LOCKED contract."""
+    facts_by_id = {f.id: f for f in facts}
+    mismatches = 0
+
+    def _backing_tokens(fact_ids: list[int]) -> set[tuple[str, str]]:
+        tokens: set[tuple[str, str]] = set()
+        for fid in fact_ids:
+            fact = facts_by_id.get(fid)
+            if fact is not None:
+                tokens |= _extract_number_tokens(fact.text)
+        return tokens
+
+    def _check_field(field: str, index: int | str, attr: str, value: str,
+                      backing: set[tuple[str, str]], num_cited: int) -> int:
+        if not value:
+            return 0
+        backing_numbers = {num for num, _unit in backing}
+        found = 0
+        for num, unit in _extract_number_tokens(value):
+            if (num, unit) in backing:
+                continue
+            found += 1
+            if num in backing_numbers:
+                logger.warning(
+                    "assemble_and_render: numeric parity -- %s[%s].%s has a "
+                    "value matching a cited fact's number but with a "
+                    "different or missing unit (unit=%r)",
+                    field, index, attr, unit,
+                )
+            else:
+                logger.warning(
+                    "assemble_and_render: numeric parity -- %s[%s].%s "
+                    "contains a number not found in any of its %d cited "
+                    "fact(s)", field, index, attr, num_cited,
+                )
+        return found
+
+    for field, attrs in _NUMERIC_PARITY_FIELDS.items():
+        for index, item in enumerate(getattr(model, field)):
+            backing = _backing_tokens(item.source_fact_ids)
+            num_cited = len(item.source_fact_ids)
+            for attr in attrs:
+                mismatches += _check_field(field, index, attr, getattr(item, attr, ""), backing, num_cited)
+            if field == "other":
+                for step_idx, step in enumerate(item.steps):
+                    mismatches += _check_field(field, index, f"steps[{step_idx}]", step, backing, num_cited)
+
+    if model.summary:
+        mismatches += _check_field("summary", "-", "summary", model.summary,
+                                    _backing_tokens(model.summary_fact_ids),
+                                    len(model.summary_fact_ids))
+
+    if mismatches:
+        logger.warning(
+            "assemble_and_render: numeric parity check flagged %d mismatch(es) "
+            "in this care plan", mismatches,
+        )
 
 
 _WHY_PATH_RE = re.compile(r"^(medications|tests|procedures|other)\[\d+\]\.why$")
