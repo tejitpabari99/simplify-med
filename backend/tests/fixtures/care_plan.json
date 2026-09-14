@@ -6,18 +6,21 @@
   "reason_for_visit": [
     {
       "reason": "High blood pressure",
-      "description": "You reported several home blood pressure readings above your usual range."
+      "description": "You reported several home blood pressure readings above your usual range.",
+      "source_fact_ids": [1]
     }
   ],
   "diagnosis": {
     "changed_since_last_visit": "It has stayed high since your last visit.",
+    "changed_since_last_visit_fact_ids": [2],
     "details": [
       {
         "title": "Hypertension",
         "plain_name": "High blood pressure",
         "description": "The force of blood against your blood vessel walls is too high.",
         "what_it_means_for_you": "This can strain your heart over time if it is not controlled.",
-        "severity": "medium"
+        "severity": "medium",
+        "source_fact_ids": [1]
       }
     ]
   },

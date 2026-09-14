@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from models.care_plan import CarePlan
-from models.care_plan.care_plan import Diagnosis, WarningSign
+from models.care_plan.care_plan import Diagnosis, DiagnosisDetail, ReasonForVisit, WarningSign
 from utils.constants import Constants
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "care_plan.json"
@@ -113,3 +113,15 @@ def test_medication_source_fact_ids_defaults_empty():
     from models.care_plan.care_plan import Medication
     med = Medication(title="x", status="to_do")
     assert med.source_fact_ids == []
+
+
+def test_reason_for_visit_source_fact_ids_defaults_to_empty_list():
+    assert ReasonForVisit().source_fact_ids == []
+
+
+def test_diagnosis_detail_source_fact_ids_defaults_to_empty_list():
+    assert DiagnosisDetail().source_fact_ids == []
+
+
+def test_diagnosis_changed_since_last_visit_fact_ids_defaults_to_empty_list():
+    assert Diagnosis().changed_since_last_visit_fact_ids == []
