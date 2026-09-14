@@ -73,4 +73,7 @@ def provenance_for_pasted_text(text: str, *, file: str = "text_input") -> list[S
     if not text:
         return []
     line_count = len(text.split("\n"))
-    return [SourceSpan(file=file, page=1, start_line=0, end_line=line_count - 1)]
+    return [SourceSpan(
+        file=file, page=1, start_line=0, end_line=line_count - 1,
+        extraction_method="pasted",
+    )]
