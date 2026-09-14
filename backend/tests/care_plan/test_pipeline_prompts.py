@@ -90,8 +90,12 @@ def test_ground_prompt_lists_all_eight_categories():
 # 4. Assemble prompt content guards (PRD 04 §7.2)
 # ---------------------------------------------------------------------------
 
-def test_assemble_prompt_contains_not_stated_sentinel():
-    assert "Not stated in your note." in _ASSEMBLE_PROMPT
+def test_assemble_prompt_not_stated_rule_instructs_null():
+    assert "Not stated in your note." not in _ASSEMBLE_PROMPT
+    not_stated_start = _ASSEMBLE_PROMPT.index("\nNOT STATED --")
+    next_section_start = _ASSEMBLE_PROMPT.index("\nMERGE --")
+    not_stated_section = _ASSEMBLE_PROMPT[not_stated_start:next_section_start]
+    assert "null" in not_stated_section
 
 
 def test_assemble_prompt_contains_merge_example():
@@ -210,8 +214,9 @@ def test_correct_prompt_contains_pii_sweep_instruction():
     assert "PII SWEEP" in _CORRECT_PROMPT
 
 
-def test_correct_prompt_contains_not_stated_sentinel():
-    assert "Not stated in your note." in _CORRECT_PROMPT
+def test_correct_prompt_not_stated_rule_instructs_null():
+    assert "Not stated in your note." not in _CORRECT_PROMPT
+    assert "null" in _CORRECT_PROMPT
 
 
 def test_style_rules_is_non_empty_and_shared():

@@ -410,8 +410,10 @@ def _log_thin_fields(model: CarePlan) -> None:
     NOT STATED, there is no fallback value to substitute for a field the
     model DID fill in, and dropping an otherwise-backed item over one thin
     field would remove genuine content the brief's "remove nothing"
-    principle protects. "Not stated in your note." (25 chars) always clears
-    the length rule on its own, so the sentinel is never flagged here."""
+    principle protects. why may be None (not stated) -- None is falsy, so
+    it short-circuits the `if value and ...` guard below before
+    _is_informative_quote is ever called on it (PRD 13 §4.3); a thin-but-
+    present why still gets flagged exactly as before."""
     for field, attr in _RICHNESS_CHECKS:
         for index, item in enumerate(getattr(model, field)):
             value = getattr(item, attr, "")
