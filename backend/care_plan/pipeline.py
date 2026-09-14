@@ -1195,6 +1195,10 @@ class CarePlanPipeline:
             # Bundled under one progress-bar step deliberately (PRD §4.1) — none of
             # what happens here is something a patient needs itemized.
             yield StepEvent(step=_STEP.CORRECT.number, status="active", label=_STEP.CORRECT.label)
+
+            if review_result and review_result.coverage:
+                _log_coverage_summary(review_result.coverage, facts)
+
             if review_result and review_result.corrections:
                 try:
                     care_plan = _call(
