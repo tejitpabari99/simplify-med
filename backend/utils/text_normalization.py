@@ -4,13 +4,88 @@ import re
 import unicodedata
 
 
+def normalize_with_offsets(text: str) -> tuple[str, list[tuple[int, int]]]:
+    """Like normalize_text, but also returns, for each character of the
+    normalized output, the (start, end) span of raw `text` indices
+    (Python slice semantics) it was derived from -- `len(spans) ==
+    len(normalized)` always. Used by grounding (PRD 03 §4.3) to recover
+    char_start/char_end for a quote already proven verbatim by
+    normalize_text-based comparison, when a naive `str.find` on the raw
+    strings would miss a whitespace- or case-normalized match.
+
+    Algorithm, in two passes:
+
+    1. Per-character transliteration. For each raw character at index i,
+       run it individually through the same transformation normalize_text
+       already applies to the whole string -- NFKD decompose, ASCII-encode
+       with errors="ignore", lowercase. Unicode's canonical/compatibility
+       decomposition is memoryless (a character's decomposition never
+       depends on its neighbors), so doing this one character at a time
+       yields the same result as doing it to the whole string at once.
+       This produces zero or more output characters per raw character
+       (zero if the character is dropped entirely, e.g. a symbol with no
+       ASCII equivalent; more than one only for the rare compatibility
+       decomposition that expands into multiple ASCII characters, e.g. a
+       ligature). Every emitted character is tagged with the raw span
+       (i, i+1) of the single input character that produced it.
+
+    2. Whitespace collapse, mirroring `" ".join(text.split())`: scan the
+       tagged character list and replace each maximal run of
+       whitespace-classified characters with a single " ", tagged with the
+       span (first run member's start, last run member's end); drop
+       leading and trailing whitespace runs entirely (no character
+       emitted, matching `str.split()`'s own behavior).
+
+    The result is character-identical to normalize_text(text) by
+    construction (both passes implement exactly normalize_text's own
+    documented steps -- decompose, ASCII-ignore, lowercase, whitespace
+    collapse-and-strip), which is what test_normalize_with_offsets_matches_
+    normalize_text (§7.3) checks across a corpus of representative inputs.
+    """
+    # Pass 1: per-character transliteration, each emitted character tagged
+    # with the raw (i, i+1) span of the single input character it came from.
+    chars: list[str] = []
+    spans: list[tuple[int, int]] = []
+    for i, raw_char in enumerate(text):
+        nfkd = unicodedata.normalize("NFKD", raw_char)
+        ascii_char = nfkd.encode("ascii", "ignore").decode("ascii").lower()
+        for out_char in ascii_char:
+            chars.append(out_char)
+            spans.append((i, i + 1))
+
+    # Pass 2: whitespace collapse, mirroring " ".join(text.split()) -- a
+    # maximal interior run of whitespace becomes a single " " tagged with
+    # the run's own start/end; leading/trailing runs are dropped entirely.
+    normalized_chars: list[str] = []
+    normalized_spans: list[tuple[int, int]] = []
+    total = len(chars)
+    i = 0
+    while i < total:
+        if chars[i].isspace():
+            run_start = spans[i][0]
+            run_end = spans[i][1]
+            j = i
+            while j < total and chars[j].isspace():
+                run_end = spans[j][1]
+                j += 1
+            if normalized_chars and j < total:
+                # Interior run: neither leading (something already emitted)
+                # nor trailing (more non-whitespace content follows).
+                normalized_chars.append(" ")
+                normalized_spans.append((run_start, run_end))
+            i = j
+        else:
+            normalized_chars.append(chars[i])
+            normalized_spans.append(spans[i])
+            i += 1
+
+    return "".join(normalized_chars), normalized_spans
+
+
 def normalize_text(text: str) -> str:
     """Lowercase, strip accents, and collapse whitespace."""
-    # NFKD splits accented characters into base + combining mark so we can
-    # strip non-ASCII marks deterministically.
-    nfkd = unicodedata.normalize("NFKD", text)
-    ascii_text = nfkd.encode("ascii", "ignore").decode("ascii")
-    return " ".join(ascii_text.lower().split())
+    return normalize_with_offsets(text)[0]
+
 
 def contains_normalized_term(normalized_text: str, normalized_term: str) -> bool:
     """Return true when a normalized term appears with word boundaries."""

@@ -34,7 +34,12 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
   componentDidCatch(error: Error, info: ErrorInfo): void {
     // Best-effort console diagnostics; no analytics dependency here since a
     // rendering crash is exactly the kind of moment other subsystems (GA,
-    // Firestore listeners, etc.) may also be in a bad state.
+    // Firestore listeners, etc.) may also be in a bad state. This is the only
+    // place the real error is surfaced anywhere -- render() below must never
+    // echo `error.message` into the DOM, since a caught render error is by
+    // definition unexpected/internal (a bug, a malformed payload, a
+    // third-party throw) and could contain implementation details that
+    // shouldn't reach an end user.
     console.error('ErrorBoundary caught an error:', error, info.componentStack);
   }
 
@@ -52,11 +57,6 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
           <p className="error-box">
             An unexpected error occurred while showing this page. Nothing you entered was saved.
           </p>
-          {error.message && (
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', wordBreak: 'break-word' }}>
-              {error.message}
-            </p>
-          )}
           <button className="cta-btn" onClick={this.handleRestart}>Start over</button>
         </div>
       );

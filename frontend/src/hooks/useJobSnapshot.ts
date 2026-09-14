@@ -5,6 +5,19 @@ import type { FirestoreJobError } from '../types/errors';
 
 export type JobStatus = 'not_started' | 'processing' | 'completed' | 'error';
 
+// The full set of statuses the backend ever writes to a job doc (see
+// backend/models/api_response.py StatusEnum as used by backend/models/job.py,
+// and the literal "completed"/"error"/"processing" strings in
+// backend/utils/firebase.py's complete_job/fail_job and
+// backend/routes/worker.py). StatusEnum also defines "success", but that value
+// is only ever used for HTTP ApiResponse envelopes, never written as a job
+// doc's `status` field.
+const KNOWN_JOB_STATUSES: readonly JobStatus[] = ['not_started', 'processing', 'completed', 'error'];
+
+function isKnownJobStatus(value: unknown): value is JobStatus {
+  return typeof value === 'string' && (KNOWN_JOB_STATUSES as readonly string[]).includes(value);
+}
+
 export interface JobDoc {
   status: JobStatus;
   stage: number | null;
@@ -58,11 +71,33 @@ export function useJobSnapshot(jobId: string | null): {
           return;
         }
         const data = snapshot.data();
+        const rawStatus: unknown = data.status;
+        // Owner requirement: the user must never be left blocked or without
+        // info. Callers key their "is this job done" routing off `status`
+        // (HomePage treats only 'completed'/'error' as terminal), so a status
+        // value outside the backend's known set would otherwise never match
+        // and would strand the user on ProcessingScreen until the 6-minute
+        // watchdog. Treat anything unrecognized as a terminal internal error
+        // instead, so the existing generic error UI takes over immediately.
+        // error_data is dropped rather than passed through: it wasn't written
+        // by the normal fail_job() path for this status, so it isn't
+        // guaranteed to be PHI-free/user-safe.
+        let status: JobStatus;
+        let errorData = (data.error_data ?? null) as FirestoreJobError | null;
+        if (rawStatus == null) {
+          status = 'completed';
+        } else if (isKnownJobStatus(rawStatus)) {
+          status = rawStatus;
+        } else {
+          console.error('useJobSnapshot: unrecognized job status from Firestore', rawStatus);
+          status = 'error';
+          errorData = null;
+        }
         setJobDoc({
-          status: (data.status as JobStatus) ?? 'completed',
+          status,
           stage: data.stage ?? null,
           output_data: data.output_data ?? null,
-          error_data: data.error_data ?? null,
+          error_data: errorData,
           name: data.name ?? '',
         });
         setExists(true);

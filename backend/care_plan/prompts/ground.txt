@@ -1,0 +1,39 @@
+You are extracting atomic clinical facts from a numbered clinical note for a patient-facing care plan tool. Every fact you emit must be traceable to exactly one numbered line below.
+
+Each numbered line is one unit of source text: "[<id>] <text>". Cite a unit ONLY by its integer id, exactly as printed in brackets. Do not invent an id that is not printed below. If a clause spans two units, cite whichever unit contains the exact words you use as your quote.
+
+Return a JSON array. Each array element is ONE atomic clinical fact -- roughly one note clause. "Continue metoprolol 25 mg twice daily" is ONE fact, not four. Do not split a single clause into separate facts for dose, frequency, and instruction. Do not merge two different units' content into one fact.
+
+Each fact has exactly these fields:
+- category: exactly one of the eight categories in the checklist below.
+- unit_id: the integer id (see brackets above) of the ONE unit your quote comes from.
+- quote: a short, VERBATIM excerpt copied exactly from that unit's text -- not paraphrased, not retyped, not corrected, not translated out of an abbreviation. It must be a literal, contiguous span of characters exactly as they appear on that numbered line.
+- text: the fact's content in plain clinical shorthand, at clause granularity, keeping every clinical detail (dose, frequency, timing, condition, quantity, site) named in the source. Unlike quote, text MAY expand an abbreviation using the list below.
+
+CATEGORY CHECKLIST -- every fact gets exactly one category. Read the boundary rule before assigning a category; where two categories could plausibly apply, the boundary rule decides.
+
+| Category | Criteria | Boundary rule |
+|---|---|---|
+| reason_for_visit | Why the patient presented -- complaint, symptom, or referral reason | Not the diagnosis. What they came WITH, not what was FOUND. |
+| diagnosis | Conditions, findings and interpretations the clinician recorded | Includes imaging and lab findings stated as conclusions. Excludes the raw measurement, which belongs to the test. |
+| medications | Substances the patient takes THEMSELVES, AT HOME | Anything administered DURING a test or procedure belongs to that item instead -- never to medications. Example: contrast dye given during a CT scan is a fact about the scan (category "tests" or "procedures"), never "medications". |
+| tests | Diagnostic investigations -- labs, imaging, tracings | Covers both already-performed and newly-ordered tests. |
+| procedures | Interventions performed ON the patient | Carries any substance administered during it (see the medications boundary rule above). |
+| other | Instructions that are none of the above -- diet, activity, wound care, self-monitoring | If it names a date or an appointment, it is follow_up instead. |
+| follow_up | A future appointment or contact, with timing | Not a general instruction. Must involve seeing or contacting someone. |
+| warning_signs | Symptoms the note tells the patient to watch for | Must come with what to do, from the note. A side effect that is merely LISTED, with no instruction to act on it, is NOT a warning sign -- extract it as part of the medication's own fact instead. |
+
+Extract every fact that fits one of these eight categories. There is no "other clinical content" catch-all here and no priority judgement to make -- if a statement genuinely fits none of the eight, do not extract it as a fact.
+
+ABBREVIATIONS DETECTED IN THIS NOTE -- the source text below may use these; read them expanded, and use the expansion in `text` (never in `quote`, which must stay verbatim as printed):
+{abbrev_block}
+
+Do not fabricate a fact with no unit backing it. Do not invent a quote that only approximately matches its unit's text. If the same clinical fact is stated in more than one place, extract it once, citing whichever unit states it most completely.
+
+Return JSON only -- an array matching this schema. No markdown, no commentary, no trailing explanation.
+{schema}
+
+NUMBERED SOURCE:
+{units_block}
+
+JSON OUTPUT:

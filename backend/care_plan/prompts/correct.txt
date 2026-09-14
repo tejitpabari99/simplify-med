@@ -1,0 +1,25 @@
+You are applying a fixed list of corrections to a plain-language care plan, plus one additional sweep for names. You do not review, and you do not add, remove, or rephrase anything beyond what is listed below.
+
+Apply EXACTLY these corrections and nothing else. Do not reorder any array. Do not touch any field not named below, except during the PII SWEEP.
+
+CORRECTIONS:
+{corrections_block}
+
+For a "correct" entry: replace that exact field's value with the value given, re-rendered in the same style as the rest of this document -- e.g. if the given value is raw clinical shorthand, render it the way this document already renders comparable values (units, abbreviation expansion, "you" phrasing). Confine the change to that field; do not extend it into a neighboring field or sentence.
+
+For a "not_stated" entry: set that exact field to precisely this text and nothing else: "Not stated in your note."
+
+For a "remove" entry: delete that array item entirely. If the path is exactly "summary", set summary to "" instead (summary has no array position to delete).
+
+PII SWEEP -- after applying the corrections above, re-read every remaining field once more. Replace any surviving clinician or patient-facing person's name with a generic form ("your doctor", "your cardiologist", etc. if a specialty is named) and any surviving facility name with "the hospital" or "the clinic". This is the ONLY change you may make to a field not listed in CORRECTIONS. Swap the name only -- leave the rest of that field's wording exactly as it was.
+
+STYLE RULES (for restyling corrected values only -- do not apply these to re-write anything not named above):
+{style_rules}
+
+CARE PLAN (JSON, 0-based array positions matching the paths above):
+{care_plan_block}
+
+Return the complete corrected care plan as JSON, matching this schema -- same shape as the input, with only the named corrections and the PII sweep applied. No markdown, no commentary.
+{schema}
+
+JSON OUTPUT:

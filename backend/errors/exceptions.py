@@ -164,15 +164,51 @@ def make_error_response(
 # build_error_data — Firestore-ready dict for fail_job
 # ---------------------------------------------------------------------------
 
-def build_error_data(error_code: ErrorCode, detail: str = "") -> dict:
-    """Build the error_data dict written to Firestore on job failure."""
+def build_error_data(error_code: ErrorCode, detail: str = "", **template_vars) -> dict:
+    """
+    Build the error_data dict written to Firestore on job failure.
+
+    Honors ``ERROR_CATALOG[error_code].details_template`` the same way
+    ``make_error_response`` (the HTTP path) does, rather than writing
+    caller-supplied ``detail`` text straight into ``error_data.details``:
+
+    - An INTERNAL error (empty ``details_template``, e.g.
+      PIPELINE_VALIDATION_FAILED, LLM_MAX_TOKENS, UNKNOWN_ERROR, FILE_PARSE_FAILED)
+      never gets a ``details`` value, regardless of what `detail` holds --
+      the owner requirement is that internal failures surface only a
+      generic message (``message``/`user_hint`, both static, curated text)
+      to the user. This is also defense in depth: even a SimplifyError's
+      own `detail` (curated by our code) could carry patient-derived text
+      forwarded from an upstream exception message (e.g. a Pydantic
+      ValidationError's `str(e)`, embedding the invalid value) -- see
+      care_plan/pipeline.py's `_validation_error_detail` for the source-side
+      fix; this is the second, structural layer of the same defense.
+    - A USER error (non-empty ``details_template``, e.g.
+      UNSUPPORTED_FILE_TYPE, JOB_TIMEOUT, PIPELINE_ERROR) gets that template
+      safely expanded via ``_safe_format`` -- never the raw `detail` string
+      verbatim -- with `detail` filling a template's ``{detail}``
+      placeholder (PIPELINE_ERROR, UNAUTHORIZED) and any extra
+      ``template_vars`` filling the rest (e.g. ``stage=`` for JOB_TIMEOUT).
+      A placeholder with no matching var is left as literal ``{name}`` text
+      (``_safe_format``'s existing missing-key behavior) rather than raising
+      or leaking anything -- the same fallback the HTTP path already
+      exhibits for a generically-caught SimplifyError with no details_vars.
+
+    Full exception detail remains available server-side only, via
+    `logger.exception` at the call sites that lead here -- never through
+    this dict.
+    """
     info = ERROR_CATALOG[error_code]
+    if info.details_template:
+        details = _safe_format(info.details_template, {"detail": detail, **template_vars}) or None
+    else:
+        details = None
     return {
         "code": info.code,
         "message": info.message,
         "user_hint": info.user_hint,
         "retryable": info.retryable,
-        "details": detail or None,
+        "details": details,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -181,25 +217,13 @@ def build_error_data_from_exc(exc: Exception) -> dict:
     """
     Classify any exception and return a Firestore-ready ``error_data`` dict.
 
-    Shorthand for ``build_error_data(*_classify_exc(exc))``.
-
-    Defense in depth for UNKNOWN_ERROR (the catch-all classification for any
-    exception _classify_exc doesn't recognize): _classify_exc's fallback
-    returns ``str(exc)`` as the detail, which lands verbatim in
-    ``error_data.details`` on the Firestore job doc -- a field the frontend's
-    live listener reads. Most such messages are innocuous library/network
-    error text, but some exception types (certain Pydantic ValidationErrors,
-    for instance) embed the actual invalid value in their message, and this
-    is the one branch where the underlying exception was never classified/
-    curated by our own code (contrast a SimplifyError's `detail`, which IS
-    written by us and is safe to show). Rather than pass arbitrary exception
-    text through to a public, health-adjacent client, drop it here; the full
-    exception is still captured server-side via `logger.exception` at every
-    call site that leads here (see edge-case review Finding 10).
+    Shorthand for ``build_error_data(*_classify_exc(exc))``. Any redaction of
+    the classified `detail` (e.g. for UNKNOWN_ERROR, or any other code whose
+    catalog entry has no ``details_template``) is handled uniformly inside
+    `build_error_data` itself -- see its docstring; this function no longer
+    needs its own special case.
     """
     error_code, detail = _classify_exc(exc)
-    if error_code is ErrorCode.UNKNOWN_ERROR:
-        detail = ""
     return build_error_data(error_code, detail)
 
 

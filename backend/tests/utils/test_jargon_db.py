@@ -121,7 +121,7 @@ class TestLookupAbbreviations(unittest.TestCase):
 class TestBuildTermsGlossary(unittest.TestCase):
     def test_builds_dict_from_hits(self):
         hits = [
-            {"term": "Hypertension", "definition": "High blood pressure", "source": "test", "imgUrl": None, "altText": None},
+            {"term": "Hypertension", "matched_term": "Hypertension", "definition": "High blood pressure", "source": "test", "imgUrl": None, "altText": None},
         ]
         glossary = build_terms_glossary(hits)
         self.assertIn("Hypertension", glossary)
@@ -132,11 +132,42 @@ class TestBuildTermsGlossary(unittest.TestCase):
 
     def test_last_write_wins_for_duplicates(self):
         hits = [
-            {"term": "Stroke", "definition": "first def", "source": "src1", "imgUrl": None, "altText": None},
-            {"term": "Stroke", "definition": "second def", "source": "src2", "imgUrl": None, "altText": None},
+            {"term": "Stroke", "matched_term": "Stroke", "definition": "first def", "source": "src1", "imgUrl": None, "altText": None},
+            {"term": "Stroke", "matched_term": "Stroke", "definition": "second def", "source": "src2", "imgUrl": None, "altText": None},
         ]
         glossary = build_terms_glossary(hits)
         self.assertEqual(glossary["Stroke"]["definition"], "second def")
+
+    def test_build_terms_glossary_keys_on_matched_term_not_term(self):
+        hits = [{
+            "term": "plaque (in an artery)", "matched_term": "plaque",
+            "definition": "d", "source": "s", "imgUrl": None, "altText": None,
+        }]
+        glossary = build_terms_glossary(hits)
+        self.assertIn("plaque", glossary)
+        self.assertNotIn("plaque (in an artery)", glossary)
+
+    def test_lookup_medical_terms_plaque_in_artery_matches_bare_alias(self):
+        normalized = normalize_text("heavy plaque was seen")
+        hits = lookup_medical_terms(normalized)
+        plaque_hits = [h for h in hits if h["matched_term"] == "plaque"]
+        self.assertTrue(plaque_hits, f"Expected a 'plaque' hit, got: {hits}")
+
+    def test_build_terms_glossary_abdomen_abdominal_keys_on_matched_alias(self):
+        hits = [{
+            "term": "abdomen, abdominal", "matched_term": "abdominal",
+            "definition": "d", "source": "s", "imgUrl": None, "altText": None,
+        }]
+        glossary = build_terms_glossary(hits)
+        self.assertIn("abdominal", glossary)
+        self.assertNotIn("abdomen, abdominal", glossary)
+
+    def test_get_source_name_is_public(self):
+        from utils.jargon_db import get_source_name
+        self.assertEqual(
+            get_source_name("michigan_medical_dictionary"),
+            "University of Michigan Plain Language Medical Dictionary",
+        )
 
 
 if __name__ == "__main__":

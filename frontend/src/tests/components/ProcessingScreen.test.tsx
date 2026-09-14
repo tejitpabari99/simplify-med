@@ -12,7 +12,7 @@ const baseJobDoc: JobDoc = {
 };
 
 describe('ProcessingScreen', () => {
-  it('renders steps 1-2 done, step 3 active, steps 4-5 waiting for stage=3', () => {
+  it('renders steps 1-2 done, step 3 active, steps 4-6 waiting for stage=3', () => {
     render(<ProcessingScreen jobDoc={baseJobDoc} snapshotError={null} jobExists={true} onRestart={vi.fn()} />);
     const nodes = document.querySelectorAll('.step-node');
     expect(nodes[0].className).toContain('done');
@@ -20,7 +20,8 @@ describe('ProcessingScreen', () => {
     expect(nodes[2].className).toContain('active');
     expect(nodes[3].className).toContain('waiting');
     expect(nodes[4].className).toContain('waiting');
-    expect(screen.getByText('Simplifying language')).toBeInTheDocument();
+    expect(nodes[5].className).toContain('waiting');
+    expect(screen.getByText('Finding the facts in your note')).toBeInTheDocument();
   });
 
   it('renders the normal step list (not a terminal state) while exists is still null (not yet loaded)', () => {
@@ -69,7 +70,7 @@ describe('ProcessingScreen', () => {
     render(<ProcessingScreen jobDoc={baseJobDoc} snapshotError={null} jobExists={true} onRestart={vi.fn()} />);
     const live = document.querySelector('[aria-live="polite"]');
     expect(live).not.toBeNull();
-    expect(live).toHaveTextContent('Step 3 of 5: Simplifying language');
+    expect(live).toHaveTextContent('Step 3 of 6: Finding the facts in your note');
   });
 
   it('updates the live region as the active step advances', () => {
@@ -79,7 +80,7 @@ describe('ProcessingScreen', () => {
     rerender(
       <ProcessingScreen jobDoc={{ ...baseJobDoc, stage: 4 }} snapshotError={null} jobExists={true} onRestart={vi.fn()} />,
     );
-    expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent('Step 4 of 5');
+    expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent('Step 4 of 6');
   });
 });
 

@@ -1,8 +1,10 @@
 """TDD tests for POST /jobs and DELETE /jobs/<job_id>."""
-import pytest
+import json
 from datetime import datetime, timezone
 from io import BytesIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
+
+import pytest
 from flask import Flask
 
 from errors import ErrorCode, SimplifyError
@@ -44,10 +46,13 @@ def _allow_rate_limit(monkeypatch):
 # POST /jobs
 # ---------------------------------------------------------------------------
 
-@patch.dict("os.environ", JOBS_ENV)
+@patch.dict("os.environ", {**JOBS_ENV, "GCP_BUCKET_NAME": "test-bucket"})
+@patch("services.care_plan_input.get_gcs_bucket")
 @patch("routes.jobs.enqueue_job_safe", return_value=None)
 @patch("routes.jobs.create_job_doc")
-def test_post_text_returns_202_with_job_fields(mock_create_doc, mock_enqueue, client_jobs, auth_ok):
+def test_post_text_returns_202_with_job_fields(
+    mock_create_doc, mock_enqueue, mock_get_gcs_bucket, client_jobs, auth_ok
+):
     resp = client_jobs.post("/jobs", json={"text": "Patient has hypertension."}, headers=auth_ok)
     assert resp.status_code == 202
     assert "job_id" in resp.get_json()
@@ -111,8 +116,46 @@ def test_post_multipart_one_blank_file_among_several_still_succeeds(
     )
     assert resp.status_code == 202
     mock_create_doc.assert_called_once()
+    captured = json.loads(bucket.blob.return_value.upload_from_string.call_args.args[0])
+    assert "perfectly good clinical note" in captured["text"]
+
+
+@patch.dict("os.environ", {**JOBS_ENV, "GCP_BUCKET_NAME": "test-bucket"})
+@patch("services.care_plan_input.get_gcs_bucket")
+@patch("routes.jobs.enqueue_job_safe", return_value=None)
+@patch("routes.jobs.create_job_doc")
+def test_post_text_job_uploads_payload_and_stores_uri(
+    mock_create_doc, mock_enqueue, mock_get_gcs_bucket, client_jobs, auth_ok
+):
+    text = "Monitor blood pressure daily.\nFollow up next week."
+    bucket = mock_get_gcs_bucket.return_value
+    bucket.blob.return_value = MagicMock()
+
+    resp = client_jobs.post("/jobs", json={"text": text}, headers=auth_ok)
+
+    assert resp.status_code == 202
+    captured = json.loads(bucket.blob.return_value.upload_from_string.call_args.args[0])
+    assert captured["text"] == text
+    assert captured["provenance"] == [
+        {"file": "text_input", "page": 1, "start_line": 0, "end_line": 1}
+    ]
     payload = mock_create_doc.call_args.kwargs["payload"]
-    assert "perfectly good clinical note" in payload["input_text"]
+    assert payload["input_payload_gcs_uri"].startswith("gs://test-bucket/care_plan_inputs/")
+    retired_fields = {"input_" + "text", "input_" + "provenance"}
+    assert not retired_fields & payload.keys()
+
+
+@patch.dict("os.environ", JOBS_ENV)
+@patch("routes.jobs.upload_job_input", side_effect=RuntimeError("GCS unavailable"))
+@patch("routes.jobs.create_job_doc")
+def test_post_job_returns_500_when_upload_job_input_raises(
+    mock_create_doc, mock_upload_job_input, client_jobs, auth_ok
+):
+    resp = client_jobs.post("/jobs", json={"text": "Patient has hypertension."}, headers=auth_ok)
+
+    assert resp.status_code == 500
+    mock_upload_job_input.assert_called_once()
+    mock_create_doc.assert_not_called()
 
 
 @patch.dict("os.environ", {**JOBS_ENV, "GCP_BUCKET_NAME": "test-bucket"})
@@ -193,9 +236,12 @@ def test_post_unauthenticated_returns_401(client_jobs):
     assert resp.status_code == 401
 
 
-@patch.dict("os.environ", {}, clear=True)
+@patch.dict("os.environ", {"GCP_BUCKET_NAME": "test-bucket"}, clear=True)
+@patch("services.care_plan_input.get_gcs_bucket")
 @patch("routes.jobs.create_job_doc")
-def test_post_missing_cloud_tasks_config_returns_500_and_no_doc_created(mock_create_doc, client_jobs, auth_ok):
+def test_post_missing_cloud_tasks_config_returns_500_and_no_doc_created(
+    mock_create_doc, mock_get_gcs_bucket, client_jobs, auth_ok
+):
     resp = client_jobs.post("/jobs", json={"text": "hi"}, headers=auth_ok)
     assert resp.status_code == 500
     # Regression guard: this route validates Cloud Tasks config BEFORE
@@ -203,9 +249,12 @@ def test_post_missing_cloud_tasks_config_returns_500_and_no_doc_created(mock_cre
     mock_create_doc.assert_not_called()
 
 
-@patch.dict("os.environ", JOBS_ENV)
+@patch.dict("os.environ", {**JOBS_ENV, "GCP_BUCKET_NAME": "test-bucket"})
+@patch("services.care_plan_input.get_gcs_bucket")
 @patch("routes.jobs.create_job_doc")
-def test_post_ignores_client_supplied_grading_and_version_and_doc_id(mock_create_doc, client_jobs, auth_ok):
+def test_post_ignores_client_supplied_grading_and_version_and_doc_id(
+    mock_create_doc, mock_get_gcs_bucket, client_jobs, auth_ok
+):
     with patch("routes.jobs.enqueue_job_safe", return_value=None):
         resp = client_jobs.post(
             "/jobs",
@@ -255,14 +304,22 @@ def _mock_doc(exists, data=None):
 @patch("routes.jobs.delete_gcs_object")
 @patch("routes.jobs.firestore_client")
 def test_delete_owned_job_returns_204_and_deletes_gcs(mock_fs, mock_delete_gcs, client_jobs, auth_ok):
-    doc = _mock_doc(True, {"uid": "user-1", "input_pdf_gcs_uri": "gs://b/p.pdf"})
+    doc = _mock_doc(True, {
+        "uid": "user-1",
+        "input_pdf_gcs_uri": "gs://b/p.pdf",
+        "input_payload_gcs_uri": "gs://b/payload.json",
+    })
     ref = MagicMock()
     ref.get.return_value = doc
     mock_fs.return_value.collection.return_value.document.return_value = ref
 
     resp = client_jobs.delete("/jobs/job-1", headers=auth_ok)
     assert resp.status_code == 204
-    mock_delete_gcs.assert_called_once_with("gs://b/p.pdf")
+    mock_delete_gcs.assert_has_calls([
+        call("gs://b/p.pdf"),
+        call("gs://b/payload.json"),
+    ])
+    assert mock_delete_gcs.call_count == 2
     ref.delete.assert_called_once()
 
 
@@ -322,10 +379,13 @@ def auth_anonymous(monkeypatch):
     return {"Authorization": "Bearer anon-token"}
 
 
-@patch.dict("os.environ", JOBS_ENV)
+@patch.dict("os.environ", {**JOBS_ENV, "GCP_BUCKET_NAME": "test-bucket"})
+@patch("services.care_plan_input.get_gcs_bucket")
 @patch("routes.jobs.enqueue_job_safe", return_value=None)
 @patch("routes.jobs.create_job_doc")
-def test_post_anonymous_token_accepted_on_jobs(mock_create_doc, mock_enqueue, client_jobs, auth_anonymous):
+def test_post_anonymous_token_accepted_on_jobs(
+    mock_create_doc, mock_enqueue, mock_get_gcs_bucket, client_jobs, auth_anonymous
+):
     resp = client_jobs.post("/jobs", json={"text": "Patient has hypertension."}, headers=auth_anonymous)
     assert resp.status_code == 202
     assert "job_id" in resp.get_json()
@@ -337,14 +397,15 @@ def test_post_anonymous_token_accepted_on_jobs(mock_create_doc, mock_enqueue, cl
 # Server-side max text length (Finding 2)
 # ---------------------------------------------------------------------------
 
-@patch.dict("os.environ", JOBS_ENV)
+@patch.dict("os.environ", {**JOBS_ENV, "GCP_BUCKET_NAME": "test-bucket"})
+@patch("services.care_plan_input.get_gcs_bucket")
 @patch("routes.jobs.enqueue_job_safe", return_value=None)
 @patch("routes.jobs.create_job_doc")
-def test_post_text_at_max_length_is_accepted(mock_create_doc, mock_enqueue, client_jobs, auth_ok):
+def test_post_text_at_max_length_is_accepted(
+    mock_create_doc, mock_enqueue, mock_get_gcs_bucket, client_jobs, auth_ok
+):
     from utils.constants import Constants
-    # MAX_TEXT_BYTES (not MAX_TEXT_LENGTH) is the binding cap for ASCII text
-    # (1 byte/char) -- see Finding 1.
-    text = "a" * Constants.Uploads.MAX_TEXT_BYTES
+    text = "a" * Constants.Uploads.MAX_TEXT_LENGTH
     resp = client_jobs.post("/jobs", json={"text": text}, headers=auth_ok)
     assert resp.status_code == 202
     mock_create_doc.assert_called_once()
@@ -355,29 +416,7 @@ def test_post_text_at_max_length_is_accepted(mock_create_doc, mock_enqueue, clie
 @patch("routes.jobs.create_job_doc")
 def test_post_text_over_max_length_returns_400(mock_create_doc, mock_enqueue, client_jobs, auth_ok):
     from utils.constants import Constants
-    text = "a" * (Constants.Uploads.MAX_TEXT_BYTES + 1)
-    resp = client_jobs.post("/jobs", json={"text": text}, headers=auth_ok)
-    assert resp.status_code == 400
-    assert resp.get_json()["error"]["code"] == "INPUT_VALIDATION_ERROR"
-    mock_create_doc.assert_not_called()
-    mock_enqueue.assert_not_called()
-
-
-@patch.dict("os.environ", JOBS_ENV)
-@patch("routes.jobs.enqueue_job_safe", return_value=None)
-@patch("routes.jobs.create_job_doc")
-def test_post_cjk_text_under_char_cap_but_over_byte_cap_returns_400(
-    mock_create_doc, mock_enqueue, client_jobs, auth_ok
-):
-    """Regression for edge-case review Finding 1: CJK text well under the
-    500,000-character cap (so the old char-only check would have let it
-    through) is 3 bytes/char in UTF-8 and so can exceed MAX_TEXT_BYTES --
-    must now be rejected with a clean 400, not an uncaught Firestore write
-    failure surfacing as an opaque 500."""
-    from utils.constants import Constants
-    char_count = (Constants.Uploads.MAX_TEXT_BYTES // 3) + 100
-    assert char_count < Constants.Uploads.MAX_TEXT_LENGTH
-    text = "中" * char_count
+    text = "a" * (Constants.Uploads.MAX_TEXT_LENGTH + 1)
     resp = client_jobs.post("/jobs", json={"text": text}, headers=auth_ok)
     assert resp.status_code == 400
     assert resp.get_json()["error"]["code"] == "INPUT_VALIDATION_ERROR"
@@ -397,7 +436,7 @@ def test_post_uploaded_file_extracted_text_over_max_length_returns_400(
     misleading MAX_TOKENS error. Must now be rejected up front, before any
     job is created or enqueued -- the whole point of the fix."""
     from utils.constants import Constants
-    oversized_text = "a" * (Constants.Uploads.MAX_TEXT_BYTES + 1)
+    oversized_text = "a" * (Constants.Uploads.MAX_TEXT_LENGTH + 1)
     data = {"files": (BytesIO(oversized_text.encode("utf-8")), "note.txt")}
     resp = client_jobs.post(
         "/jobs", data=data, content_type="multipart/form-data", headers=auth_ok,

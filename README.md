@@ -50,6 +50,42 @@ Full detail: [`docs/architecture.md`](docs/architecture.md).
 See [`docs/local-development.md`](docs/local-development.md) for running the backend
 and frontend locally, required environment variables, and test commands.
 
+## Local testing over an ngrok tunnel
+
+For end-to-end testing against a real device or a Firebase Auth flow that needs a
+public URL, expose one half of the local stack (backend on `8080` or the frontend
+dev server on `5173`, running with `SERVICE_MODE=combined`) through the static
+ngrok domain `helene-unreconnoitred-overslowly.ngrok-free.dev`.
+
+**One-time setup:**
+
+- Add `helene-unreconnoitred-overslowly.ngrok-free.dev` (bare host, no scheme) to
+  Firebase Auth's authorized domains: Console → Authentication → Settings →
+  Authorized domains.
+- Put `CORS_ALLOWED_ORIGINS` in `backend/.env` (see `backend/.env.example`).
+
+**The one-tunnel constraint:** a free ngrok account runs one tunnel at a time, so
+the static domain points at *either* the backend *or* the frontend dev server, not
+both. Pick the arrangement that matches what you're testing:
+
+- **Tunnel the backend** — the browser stays on `http://localhost:5173`; set
+  `VITE_API_PROCESSING_URL` (in `frontend/.env.local`) to the tunnel URL. Use this
+  for most end-to-end testing.
+  ```
+  ngrok http 8080 --url=https://helene-unreconnoitred-overslowly.ngrok-free.dev
+  ```
+- **Tunnel the frontend** — opens the app itself on another device (e.g. a phone,
+  to exercise the camera/OCR upload path). The tradeoff: that device can't reach a
+  backend on `localhost`, so the backend needs its own reachable URL too.
+  ```
+  ngrok http 5173 --url=https://helene-unreconnoitred-overslowly.ngrok-free.dev
+  ```
+
+`backend/.env` and `frontend/.env.local` are gitignored and never committed. They
+don't need to be exported into the shell either: `load_dotenv()`
+(`backend/utils/firebase.py`, imported by `backend/app.py` before the CORS
+configuration is read) loads `backend/.env` automatically on backend startup.
+
 ## Repository layout
 
 ```

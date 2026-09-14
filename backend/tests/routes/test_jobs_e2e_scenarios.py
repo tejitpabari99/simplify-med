@@ -253,9 +253,16 @@ def _build_care_plan(size: str = "typical"):
     envelope.to_dict() serialization in the worker is genuine, not mocked."""
     from models.care_plan.care_plan import (
         CarePlan, ReasonForVisit, Diagnosis, DiagnosisDetail, Medication,
-        Test, Procedure, FollowUp, WarningSign, GlossaryTerm, RawArtifacts,
+        Test, Procedure, FollowUp, WarningSign, GlossaryTerm,
     )
-    n = 6 if size == "typical" else 14
+    if size == "typical":
+        n = 6
+    else:
+        # Keep Scenario 4 a meaningful Firestore document-budget regression:
+        # after RawArtifacts removal, its former 14-item dense profile was
+        # only 16,219 bytes (<2% of 1 MiB). Many structured items exercise
+        # serialization pressure without creating an oversized leaf field.
+        n = 750
     meds = [
         Medication(
             title=f"Medication {i}", plain_name=f"Drug name {i}",
@@ -264,7 +271,7 @@ def _build_care_plan(size: str = "typical"):
             duration="Ongoing, until your next visit",
             instructions="Take with a full glass of water. Do not skip doses.",
             side_effects_to_watch="Dizziness, dry cough, swelling of the lips or face, rash.",
-            importance="high",
+            status="to_do",
         )
         for i in range(n)
     ]
@@ -274,7 +281,7 @@ def _build_care_plan(size: str = "typical"):
             why="Checks how well your kidneys and liver are working on this medication.",
             description="A simple blood draw performed at any lab.",
             preparation="No fasting required.",
-            importance="low",
+            status="to_do",
         )
         for i in range(max(2, n // 2))
     ]
@@ -284,7 +291,7 @@ def _build_care_plan(size: str = "typical"):
             why="Needed to monitor your recovery.",
             what_to_expect="A short outpatient visit, usually under an hour.",
             timeframe="Within 2 weeks",
-            importance="low",
+            status="done",
         )
         for i in range(max(1, n // 4))
     ]
@@ -295,7 +302,6 @@ def _build_care_plan(size: str = "typical"):
             what_to_do="Call 911 or go to the nearest emergency room immediately.",
             urgency="emergency",
             related_to="medication",
-            importance="high",
         )
         for i in range(max(2, n // 3))
     ]
@@ -306,14 +312,12 @@ def _build_care_plan(size: str = "typical"):
         )
         for i in range(n * 2)
     }
-    raw = RawArtifacts(text="x" * 3000, simplified_text="y" * 3000, clarified_text="z" * 3000)
     return CarePlan(
         summary="Overview of your visit and what to do next.",
         reason_for_visit=[
             ReasonForVisit(reason="Follow-up visit", description="Routine follow-up for chronic condition management.")
         ],
         diagnosis=Diagnosis(
-            main_conclusion="Your blood pressure remains elevated and needs medication adjustment.",
             changed_since_last_visit="Dosage increased since last visit.",
             details=[
                 DiagnosisDetail(
@@ -325,12 +329,11 @@ def _build_care_plan(size: str = "typical"):
             ],
         ),
         medications=meds, tests=tests, procedures=procedures,
-        other=[], follow_up=[FollowUp(time_frame="2 weeks", description="Return for a blood pressure check.")],
+        other=[], follow_up=[FollowUp(time_frame="2 weeks", description="Return for a blood pressure check.", status="to_do")],
         warning_signs=warnings,
         questions=["Should I avoid salty foods?", "When can I resume exercise?"],
         low_priority=[],
         terms=terms,
-        raw=raw,
     )
 
 
@@ -357,7 +360,7 @@ def _build_grading():
 def _fake_pipeline_factory(care_plan, grading):
     calls = {"count": 0}
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="upload", is_batch=False):
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="upload", is_batch=False):
         calls["count"] += 1
         yield AdapterStepEvent(step=2, status="active", label="Terms")
         yield AdapterStepEvent(step=2, status="done", label="Terms")
@@ -367,25 +370,19 @@ def _fake_pipeline_factory(care_plan, grading):
         yield AdapterStepEvent(step=4, status="done", label="Clarify")
         yield AdapterStepEvent(step=5, status="active", label="Structure")
         yield AdapterStepEvent(step=5, status="done", label="Structure")
-        yield AdapterResult(care_plan=care_plan, grading=grading, raw_text=text, clarified_text=text)
+        yield AdapterStepEvent(step=6, status="active", label="Correct")
+        yield AdapterStepEvent(step=6, status="done", label="Correct")
+        yield AdapterResult(care_plan=care_plan, grading=grading, raw_text=text)
 
     fake_pipeline.calls = calls
     return fake_pipeline
 
 
-def _multibyte_padding(byte_budget: int) -> str:
-    """Mixed CJK / Arabic (RTL) / emoji (supplementary-plane, surrogate-pair
-    in UTF-16) / combining-diacritic text sized just under byte_budget UTF-8
-    bytes, comfortably under MAX_TEXT_LENGTH chars too (bytes/char ratio here
-    is ~1.7-2, so char count is always well under the 500,000 char cap for
-    any byte_budget <= MAX_TEXT_BYTES)."""
+def _multibyte_padding(char_budget: int) -> str:
+    """Mixed CJK / Arabic (RTL) / emoji / combining-diacritic text sized
+    just under the configured character limit."""
     unit = "中文测试مرحبا😀éé́ "
-    unit_bytes = len(unit.encode("utf-8"))
-    repeats = max(1, byte_budget // unit_bytes)
-    text = unit * repeats
-    while len(text.encode("utf-8")) >= byte_budget:
-        text = text[:-1]
-    return text
+    return (unit * ((char_budget // len(unit)) + 1))[:char_budget - 1]
 
 
 def _make_jpeg_bytes(color=(200, 50, 50), size=(64, 64)) -> bytes:
@@ -463,8 +460,9 @@ class TestScenario1TypicalDischargeSummary:
         assert resp.status_code == 202
         job_id = resp.get_json()["job_id"]
 
-        with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
-            worker_resp = _run_worker(client_worker, job_id)
+        with patch("routes.worker.load_job_input", return_value=(text, [])):
+            with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+                worker_resp = _run_worker(client_worker, job_id)
         assert worker_resp.status_code == 200
         assert fake_pipeline.calls["count"] == 1
 
@@ -472,8 +470,10 @@ class TestScenario1TypicalDischargeSummary:
         assert doc is not None
         assert doc["status"] == "completed"
 
-        # Raw input text must be gone from BOTH copies (Finding 4).
+        # Raw input remains in GCS rather than on any completed job doc.
         assert "input_text" not in doc
+        assert "input_provenance" not in doc
+        assert doc["input_payload_gcs_uri"]
         assert doc["output_data"]["input"].get("text") is None
         assert "raw" not in doc["output_data"]["care_plan"]
 
@@ -484,6 +484,7 @@ class TestScenario1TypicalDischargeSummary:
 
         size = _doc_size_bytes(doc)
         assert size < 1_048_576, f"completed doc is {size} bytes, over Firestore's 1 MiB limit"
+        assert doc.get("stage") in (None, *range(1, 7))
         # Report this concrete number (see scenario-validation report).
         print(f"\n[scenario 1] completed doc size: {size} bytes")
 
@@ -519,24 +520,61 @@ class TestScenario2PhonePhotosOCR:
         grading = _build_grading()
         fake_pipeline = _fake_pipeline_factory(care_plan, grading)
 
+        with patch("services.care_plan_input.get_gcs_bucket") as mock_bucket:
+            blob_mock = MagicMock()
+            mock_bucket.return_value.blob.return_value = blob_mock
+            with patch("services.care_plan_input.extract_text_from_image", side_effect=ocr_texts):
+                resp = _post_job(
+                    client_jobs, auth_anon, mock_gcs=False, data=data, content_type="multipart/form-data",
+                )
+        assert resp.status_code == 202
+        job_id = resp.get_json()["job_id"]
+        payload_call = next(
+            upload for upload in blob_mock.upload_from_string.call_args_list
+            if upload.kwargs["content_type"] == "application/json"
+        )
+        captured = json.loads(payload_call.args[0])
+        for t in ocr_texts:
+            assert t in captured["text"]
+
+        with patch("routes.worker.load_job_input", return_value=(captured["text"], [])):
+            with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+                worker_resp = _run_worker(client_worker, job_id)
+        assert worker_resp.status_code == 200
+
+        doc = fake_db.raw_doc("care_plan_outputs", job_id)
+        assert doc["status"] == "completed"
+        assert "input_text" not in doc
+        assert doc["input_payload_gcs_uri"]
+
+    def test_multi_file_upload_processing_doc_uses_payload_uri(self, client_jobs, fake_db, auth_anon):
+        # Same 3-image multipart upload as the test above, but stops right
+        # after POST /jobs (before _run_worker) -- proves the processing-state
+        # document carries a GCS payload URI rather than inline raw input.
+        images = [_make_jpeg_bytes(color=c) for c in [(200, 50, 50), (50, 200, 50), (50, 50, 200)]]
+        ocr_texts = [
+            "Page 1 of 3: Discharge instructions. Take ibuprofen 400mg every 6 hours as needed for pain.",
+            "Page 2 of 3: Follow up with your primary care physician within 7 days of discharge.",
+            "Page 3 of 3: Return to the ER if you experience fever above 101F or worsening pain.",
+        ]
+
+        data = {"files": [
+            (io.BytesIO(images[0]), "page1.jpg"),
+            (io.BytesIO(images[1]), "page2.jpg"),
+            (io.BytesIO(images[2]), "page3.jpg"),
+        ]}
+
         with patch("services.care_plan_input.extract_text_from_image", side_effect=ocr_texts):
             resp = _post_job(
                 client_jobs, auth_anon, data=data, content_type="multipart/form-data",
             )
         assert resp.status_code == 202
         job_id = resp.get_json()["job_id"]
-        doc = fake_db.raw_doc("care_plan_outputs", job_id)
-        # All 3 OCR'd pages' text made it into the combined input.
-        for t in ocr_texts:
-            assert t in doc["input_text"]
-
-        with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
-            worker_resp = _run_worker(client_worker, job_id)
-        assert worker_resp.status_code == 200
 
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
-        assert doc["status"] == "completed"
+        assert "input_provenance" not in doc
         assert "input_text" not in doc
+        assert doc["input_payload_gcs_uri"].startswith("gs://")
 
 
 # ===========================================================================
@@ -573,7 +611,10 @@ class TestScenario3MixedBatchLimits:
         img2 = _make_jpeg_bytes((250, 250, 250)) + pad
         txt_bytes = b"Plain text clinical note content for the visit summary."
 
-        with patch("services.care_plan_input.extract_text_from_pdf", return_value="PDF page content about the visit."):
+        with patch(
+            "services.care_plan_input.extract_pages_from_pdf",
+            return_value=[(1, "PDF page content about the visit.")],
+        ):
             data = {"files": [
                 (io.BytesIO(pdf_buf.getvalue()), "note.pdf"),
                 (io.BytesIO(docx_bytes), "note.docx"),
@@ -612,45 +653,40 @@ class TestScenario3MixedBatchLimits:
 # ===========================================================================
 
 class TestScenario4MultibyteNearLimits:
-    def test_cjk_under_char_cap_over_byte_cap_returns_clean_400(self, client_jobs, auth_anon):
-        char_count = (Constants.Uploads.MAX_TEXT_BYTES // 3) + 100
-        assert char_count < Constants.Uploads.MAX_TEXT_LENGTH
+    def test_cjk_under_char_cap_is_accepted_without_a_byte_cap(self, client_jobs, fake_db, auth_anon):
+        char_count = Constants.Uploads.MAX_TEXT_LENGTH - 100
         text = "中" * char_count
         resp = _post_job(client_jobs, auth_anon, json={"text": text})
-        assert resp.status_code == 400
-        assert resp.get_json()["error"]["code"] == "INPUT_VALIDATION_ERROR"
-        _assert_no_internal_leak(resp)
+        assert resp.status_code == 202
+        doc = fake_db.raw_doc("care_plan_outputs", resp.get_json()["job_id"])
+        assert doc["input_payload_gcs_uri"].startswith("gs://")
 
-    def test_arabic_rtl_over_byte_cap_returns_clean_400(self, client_jobs, auth_anon):
+    def test_arabic_rtl_over_char_cap_returns_clean_400(self, client_jobs, auth_anon):
         unit = "مرحبا بكم في هذا النص الطويل "
-        text = unit
-        while len(text.encode("utf-8")) <= Constants.Uploads.MAX_TEXT_BYTES:
-            text += unit
-        assert len(text.encode("utf-8")) > Constants.Uploads.MAX_TEXT_BYTES
+        text = unit * ((Constants.Uploads.MAX_TEXT_LENGTH // len(unit)) + 1)
+        assert len(text) > Constants.Uploads.MAX_TEXT_LENGTH
         resp = _post_job(client_jobs, auth_anon, json={"text": text})
         assert resp.status_code == 400
         assert resp.get_json()["error"]["code"] == "INPUT_VALIDATION_ERROR"
 
-    def test_emoji_surrogate_pairs_over_byte_cap_returns_clean_400(self, client_jobs, auth_anon):
+    def test_emoji_surrogate_pairs_over_char_cap_returns_clean_400(self, client_jobs, auth_anon):
         # Each "😀" is 1 Python codepoint (U+1F600, supplementary plane) but a
         # surrogate PAIR in UTF-16 and 4 bytes in UTF-8.
-        char_count = (Constants.Uploads.MAX_TEXT_BYTES // 4) + 100
+        char_count = Constants.Uploads.MAX_TEXT_LENGTH + 100
         text = "😀" * char_count
-        assert char_count < Constants.Uploads.MAX_TEXT_LENGTH
         resp = _post_job(client_jobs, auth_anon, json={"text": text})
         assert resp.status_code == 400
         assert resp.get_json()["error"]["code"] == "INPUT_VALIDATION_ERROR"
 
-    def test_mixed_multibyte_just_under_both_caps_completes_and_stays_under_1mib(
+    def test_mixed_multibyte_just_under_char_cap_completes_and_stays_under_1mib(
         self, client_jobs, client_worker, fake_db, auth_anon,
     ):
-        text = _multibyte_padding(Constants.Uploads.MAX_TEXT_BYTES)
-        assert len(text.encode("utf-8")) < Constants.Uploads.MAX_TEXT_BYTES
+        text = _multibyte_padding(Constants.Uploads.MAX_TEXT_LENGTH)
         assert len(text) < Constants.Uploads.MAX_TEXT_LENGTH
 
         # Use the larger "dense" output profile too, so this measures a
-        # genuine worst case: near-max multibyte input AND large structured
-        # output in the same job.
+        # genuine worst case: near-max-character multibyte input AND large
+        # structured output in the same job.
         care_plan = _build_care_plan("dense")
         grading = _build_grading()
         fake_pipeline = _fake_pipeline_factory(care_plan, grading)
@@ -659,16 +695,20 @@ class TestScenario4MultibyteNearLimits:
         assert resp.status_code == 202
         job_id = resp.get_json()["job_id"]
 
-        with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
-            worker_resp = _run_worker(client_worker, job_id)
+        with patch("routes.worker.load_job_input", return_value=(text, [])):
+            with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+                worker_resp = _run_worker(client_worker, job_id)
         assert worker_resp.status_code == 200
 
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
         assert doc["status"] == "completed"
-        assert "input_text" not in doc  # the near-max-byte input is fully cleared
+        assert "input_text" not in doc
+        assert "input_provenance" not in doc
+        assert doc["input_payload_gcs_uri"]
 
         size = _doc_size_bytes(doc)
         assert size < 1_048_576, f"completed doc is {size} bytes"
+        assert doc.get("stage") in (None, *range(1, 7))
         print(f"\n[scenario 4] completed doc size (dense output + near-max multibyte input, "
               f"input cleared before persist): {size} bytes")
 
@@ -790,9 +830,6 @@ class TestScenario6PartialFailureBatch:
         job_id = resp.get_json()["job_id"]
 
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
-        assert "Good clinical note number one" in doc["input_text"]
-        assert "Good clinical note number two" in doc["input_text"]
-        assert "Good clinical note number three" in doc["input_text"]
         assert sorted(doc.get("skipped_files", [])) == ["blank.txt", "corrupt.pdf"]
 
     def test_all_five_unusable_returns_single_clean_empty_document_error(self, client_jobs, auth_anon):
@@ -832,7 +869,7 @@ class TestScenario7FilenameHostility:
             called_path = bucket.blob.call_args[0][0]
             assert filename not in called_path
             assert called_path.startswith("care_plan_inputs/anon-1/inputs/")
-            assert called_path.endswith(".pdf")
+            assert called_path.endswith(".json")
 
     def test_255_char_filename_accepted(self, client_jobs, fake_db, auth_anon):
         filename = ("a" * 251) + ".txt"  # 255 chars total
@@ -893,11 +930,18 @@ class TestScenario7FilenameHostility:
         )
 
         # No crash, and the hostile string is contained as plain string DATA
-        # (inside the combined text via source_separator) -- never used as a
-        # dict/mapping KEY, which is the only place it could plausibly cause
-        # structural corruption in a Firestore document or JSON body.
-        assert filename in resolved.text
+        # -- carried structurally on resolved.source_filename and on each
+        # SourceSpan.file in resolved.provenance (PRD 02 §4.6: there is no
+        # more `--- Source: ... ---` marker written into the combined text)
+        # -- never used as a dict/mapping KEY, which is the only place it
+        # could plausibly cause structural corruption in a Firestore
+        # document or JSON body.
         assert resolved.source_filename == filename
+        assert len(resolved.provenance) >= 1
+        assert all(span.file == filename for span in resolved.provenance)
+        # And it must NOT leak into the plain-text field itself, since file
+        # identity no longer lives in text at all.
+        assert filename not in resolved.text
 
 
 # ===========================================================================
@@ -918,9 +962,10 @@ class TestScenario8LifecycleRaces:
             "uid": "anon-1", "name": "Test", "source_filename": "text_input",
             "created_at": now, "updated_at": now, "status": "not_started",
             "started_at": None, "stage": None,
-            "input_source_kind": "text", "input_text": "Patient has hypertension.",
+            "input_source_kind": "text",
             "input_doc_id": None, "input_source_filename": "text_input",
             "input_pdf_gcs_uri": "gs://test-bucket/care_plan_inputs/anon-1/inputs/abc.pdf",
+            "input_payload_gcs_uri": "gs://test-bucket/care_plan_inputs/anon-1/inputs/xyz.json",
             "input_version": "v1-2", "grading_enabled": False,
             "expires_at": now + timedelta(hours=1),
         })
@@ -928,15 +973,16 @@ class TestScenario8LifecycleRaces:
         care_plan = _build_care_plan("typical")
         grading = _build_grading()
 
-        def racing_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
+        def racing_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
             # Simulate the user's DELETE landing exactly while the worker is
             # mid-pipeline (between get_job_doc and complete_job).
             fake_db.collection("care_plan_outputs").document(job_id).delete()
-            yield AdapterResult(care_plan=care_plan, grading=grading, raw_text=text, clarified_text=text)
+            yield AdapterResult(care_plan=care_plan, grading=grading, raw_text=text)
 
         with patch("routes.worker.delete_gcs_object") as mock_delete_gcs:
-            with patch("routes.worker.run_care_plan_pipeline", racing_pipeline):
-                worker_resp = _run_worker(client_worker, job_id)
+            with patch("routes.worker.load_job_input", return_value=("Patient has hypertension.", [])):
+                with patch("routes.worker.run_care_plan_pipeline", racing_pipeline):
+                    worker_resp = _run_worker(client_worker, job_id)
 
         # complete_job's .update() against the now-deleted doc raises, the
         # outer handler's own fail_job also fails against the missing doc
@@ -948,9 +994,9 @@ class TestScenario8LifecycleRaces:
         # 2. GCS cleanup still ran (best-effort, from the worker's own
         #    `finally` block) -- not orphaned even though the DELETE route's
         #    own GCS delete already ran first in the real-world sequence.
-        mock_delete_gcs.assert_called_once_with(
-            "gs://test-bucket/care_plan_inputs/anon-1/inputs/abc.pdf"
-        )
+        assert mock_delete_gcs.call_count == 2
+        mock_delete_gcs.assert_any_call("gs://test-bucket/care_plan_inputs/anon-1/inputs/abc.pdf")
+        mock_delete_gcs.assert_any_call("gs://test-bucket/care_plan_inputs/anon-1/inputs/xyz.json")
 
     def test_redelivery_of_fresh_lease_is_noop_llm_not_called_twice(
         self, client_jobs, client_worker, fake_db, auth_anon,
@@ -962,9 +1008,11 @@ class TestScenario8LifecycleRaces:
             "uid": "anon-1", "name": "Test", "source_filename": "text_input",
             "created_at": started, "updated_at": started, "status": "processing",
             "started_at": started, "stage": 2,
-            "input_source_kind": "text", "input_text": "Patient has hypertension.",
+            "input_source_kind": "text",
             "input_doc_id": None, "input_source_filename": "text_input",
-            "input_pdf_gcs_uri": None, "input_version": "v1-2", "grading_enabled": False,
+            "input_pdf_gcs_uri": None,
+            "input_payload_gcs_uri": "gs://test-bucket/care_plan_inputs/anon-1/inputs/fixture.json",
+            "input_version": "v1-2", "grading_enabled": False,
             "expires_at": now + timedelta(hours=1),
         })
 
@@ -972,11 +1020,15 @@ class TestScenario8LifecycleRaces:
         grading = _build_grading()
         fake_pipeline = _fake_pipeline_factory(care_plan, grading)
 
-        with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
-            worker_resp = _run_worker(client_worker, job_id)
+        with patch("routes.worker.delete_gcs_object") as mock_delete_gcs:
+            with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+                worker_resp = _run_worker(client_worker, job_id)
 
         assert worker_resp.status_code == 200
         assert fake_pipeline.calls["count"] == 0  # never invoked -- pure no-op
+        # This delivery does not own execution, so it must leave the active
+        # attempt's input objects intact for that attempt to consume.
+        mock_delete_gcs.assert_not_called()
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
         assert doc["status"] == "processing"  # untouched
 
@@ -991,9 +1043,11 @@ class TestScenario8LifecycleRaces:
             "uid": "anon-1", "name": "Test", "source_filename": "text_input",
             "created_at": started, "updated_at": started, "status": "processing",
             "started_at": started, "stage": 2,
-            "input_source_kind": "text", "input_text": "Patient has hypertension.",
+            "input_source_kind": "text",
             "input_doc_id": None, "input_source_filename": "text_input",
-            "input_pdf_gcs_uri": None, "input_version": "v1-2", "grading_enabled": False,
+            "input_pdf_gcs_uri": None,
+            "input_payload_gcs_uri": "gs://test-bucket/care_plan_inputs/anon-1/inputs/fixture.json",
+            "input_version": "v1-2", "grading_enabled": False,
             "expires_at": now + timedelta(hours=1),
         })
 
@@ -1001,8 +1055,9 @@ class TestScenario8LifecycleRaces:
         grading = _build_grading()
         fake_pipeline = _fake_pipeline_factory(care_plan, grading)
 
-        with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
-            worker_resp = _run_worker(client_worker, job_id)
+        with patch("routes.worker.load_job_input", return_value=("Patient has hypertension.", [])):
+            with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+                worker_resp = _run_worker(client_worker, job_id)
 
         assert worker_resp.status_code == 200
         assert fake_pipeline.calls["count"] == 1  # retried exactly once
@@ -1020,9 +1075,11 @@ class TestScenario9FailureSurfaces:
         fake_db.collection("care_plan_outputs").document(job_id).set({
             "uid": "anon-1", "name": "Test", "source_filename": "text_input",
             "created_at": now, "updated_at": now, "status": "not_started",
-            "stage": None, "input_source_kind": "text", "input_text": text,
+            "stage": None, "input_source_kind": "text",
             "input_doc_id": None, "input_source_filename": "text_input",
-            "input_pdf_gcs_uri": None, "input_version": "v1-2", "grading_enabled": False,
+            "input_pdf_gcs_uri": None,
+            "input_payload_gcs_uri": "gs://test-bucket/care_plan_inputs/anon-1/inputs/fixture.json",
+            "input_version": "v1-2", "grading_enabled": False,
             "expires_at": now + timedelta(hours=1),
         })
 
@@ -1030,12 +1087,13 @@ class TestScenario9FailureSurfaces:
         job_id = str(uuid.uuid4())
         self._make_pending_job(fake_db, job_id)
 
-        with patch("care_plan.pipeline.CarePlanPipeline.__init__", return_value=None):
-            with patch(
-                "care_plan.pipeline.CarePlanPipeline._generate_text",
-                side_effect=gexc.ResourceExhausted("quota exceeded"),
-            ):
-                resp = _run_worker(client_worker, job_id)
+        with patch("routes.worker.load_job_input", return_value=("Patient has hypertension and needs medication review.", [])):
+            with patch("care_plan.pipeline.CarePlanPipeline.__init__", return_value=None):
+                with patch(
+                    "care_plan.pipeline.CarePlanPipeline._generate_json",
+                    side_effect=gexc.ResourceExhausted("quota exceeded"),
+                ):
+                    resp = _run_worker(client_worker, job_id)
 
         assert resp.status_code == 200  # worker always 200s to Cloud Tasks on a classified failure
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
@@ -1047,12 +1105,13 @@ class TestScenario9FailureSurfaces:
         job_id = str(uuid.uuid4())
         self._make_pending_job(fake_db, job_id)
 
-        with patch("care_plan.pipeline.CarePlanPipeline.__init__", return_value=None):
-            with patch(
-                "care_plan.pipeline.CarePlanPipeline._generate_text",
-                side_effect=gexc.DeadlineExceeded("deadline exceeded"),
-            ):
-                resp = _run_worker(client_worker, job_id)
+        with patch("routes.worker.load_job_input", return_value=("Patient has hypertension and needs medication review.", [])):
+            with patch("care_plan.pipeline.CarePlanPipeline.__init__", return_value=None):
+                with patch(
+                    "care_plan.pipeline.CarePlanPipeline._generate_json",
+                    side_effect=gexc.DeadlineExceeded("deadline exceeded"),
+                ):
+                    resp = _run_worker(client_worker, job_id)
 
         assert resp.status_code == 200
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
@@ -1064,16 +1123,17 @@ class TestScenario9FailureSurfaces:
         job_id = str(uuid.uuid4())
         self._make_pending_job(fake_db, job_id)
 
-        with patch("care_plan.pipeline.CarePlanPipeline.__init__", return_value=None):
-            with patch(
-                "care_plan.pipeline.CarePlanPipeline._generate_text",
-                return_value="looks fine",
-            ):
+        with patch("routes.worker.load_job_input", return_value=("Patient has hypertension and needs medication review.", [])):
+            with patch("care_plan.pipeline.CarePlanPipeline.__init__", return_value=None):
                 with patch(
-                    "care_plan.pipeline.CarePlanPipeline._generate_json",
-                    side_effect=SimplifyError(ErrorCode.LLM_INVALID_JSON, detail="not json"),
+                    "care_plan.pipeline.CarePlanPipeline._generate_text",
+                    return_value="looks fine",
                 ):
-                    resp = _run_worker(client_worker, job_id)
+                    with patch(
+                        "care_plan.pipeline.CarePlanPipeline._generate_json",
+                        side_effect=SimplifyError(ErrorCode.LLM_INVALID_JSON, detail="not json"),
+                    ):
+                        resp = _run_worker(client_worker, job_id)
 
         assert resp.status_code == 200
         doc = fake_db.raw_doc("care_plan_outputs", job_id)
@@ -1101,9 +1161,11 @@ class TestScenario9FailureSurfaces:
             "uid": "anon-1", "name": "Test", "source_filename": "text_input",
             "created_at": now, "updated_at": now, "status": "processing",
             "started_at": now, "stage": 3,
-            "input_source_kind": "text", "input_text": "Patient has hypertension.",
+            "input_source_kind": "text",
             "input_doc_id": None, "input_source_filename": "text_input",
-            "input_pdf_gcs_uri": None, "input_version": "v1-2", "grading_enabled": False,
+            "input_pdf_gcs_uri": None,
+            "input_payload_gcs_uri": "gs://test-bucket/care_plan_inputs/anon-1/inputs/fixture.json",
+            "input_version": "v1-2", "grading_enabled": False,
             "expires_at": now + timedelta(hours=1),
         })
         # No worker request happens at all here (the process is "dead") --
@@ -1242,6 +1304,7 @@ class TestScenario11AccessControl:
             "created_at": now, "updated_at": now, "status": "completed",
             "input_source_kind": "text", "input_doc_id": None,
             "input_source_filename": "text_input", "input_pdf_gcs_uri": None,
+            "input_payload_gcs_uri": "gs://test-bucket/care_plan_inputs/anon-A/inputs/fixture.json",
             "input_version": "v1-2", "grading_enabled": False,
             "expires_at": now + timedelta(hours=1),
         })
@@ -1261,6 +1324,7 @@ class TestScenario11AccessControl:
             "created_at": now, "updated_at": now, "status": "completed",
             "input_source_kind": "text", "input_doc_id": None,
             "input_source_filename": "text_input", "input_pdf_gcs_uri": None,
+            "input_payload_gcs_uri": "gs://test-bucket/care_plan_inputs/anon-A/inputs/fixture.json",
             "input_version": "v1-2", "grading_enabled": False,
             "expires_at": now + timedelta(hours=1),
         })
@@ -1276,15 +1340,12 @@ class TestScenario11AccessControl:
 
             allow get:  resource == null
                         || (request.auth != null && request.auth.uid == resource.data.uid)
-                        || resource.data.shared == true
             allow list: request.auth != null && request.auth.uid == resource.data.uid
             allow write: if false
 
-        Since `shared` is hard-coded `false` at creation for every job
-        (JobDoc.for_single) and no code path ever flips it, an
-        anonymous user B's token (uid != resource.data.uid) fails BOTH the
-        uid check and the shared check for user A's doc, so `get`/`list`
-        are denied; `write` is unconditionally denied to every client
+        An anonymous user B's token (uid != resource.data.uid) fails the
+        uid check for user A's doc, so `get`/`list` are denied; `write` is
+        unconditionally denied to every client
         (server-side Admin SDK writes via utils/firebase.py bypass rules
         entirely, which is how the app itself writes). This matches the
         route-level behavior asserted above. Flagged as NOT independently

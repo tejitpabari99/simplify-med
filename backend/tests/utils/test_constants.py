@@ -13,11 +13,6 @@ def test_uploads_namespace():
     # see the constant's own comment for the reasoning. Must stay comfortably
     # below what fits in the model's input context.
     assert Constants.Uploads.MAX_TEXT_LENGTH == 500_000
-    # Byte-based companion cap (Finding 1): must stay well under Firestore's
-    # 1 MiB doc limit and strictly below MAX_TEXT_LENGTH (bytes >= chars for
-    # any text, so the byte cap is the one that binds for ASCII).
-    assert Constants.Uploads.MAX_TEXT_BYTES == 350_000
-    assert Constants.Uploads.MAX_TEXT_BYTES < Constants.Uploads.MAX_TEXT_LENGTH
     assert Constants.Uploads.MIN_MEANINGFUL_CONTENT_CHARS == 20
 
 
@@ -73,12 +68,27 @@ def test_env_vars_namespace():
 
 def test_pipeline_steps_enum():
     steps = Constants.Pipeline.PIPELINE_STEPS
+    assert [m.name for m in steps] == [
+        "READ_NOTE", "DETECT_TERMS", "GROUND", "ASSEMBLE_AND_RENDER", "REVIEW", "CORRECT",
+    ]
+    assert steps.READ_NOTE.number == 1
+    assert steps.READ_NOTE.label == "Reading your note"
     assert steps.DETECT_TERMS.number == 2
     assert steps.DETECT_TERMS.label == "Finding difficult and medical terms"
-    assert steps.READ_NOTE.number == 1
-    assert steps.SIMPLIFY_LANGUAGE.number == 3
-    assert steps.CLARIFY_AND_ACTION.number == 4
-    assert steps.STRUCTURE_DOCUMENT.number == 5
+    assert steps.GROUND.number == 3
+    assert steps.GROUND.label == "Finding the facts in your note"
+    assert steps.ASSEMBLE_AND_RENDER.number == 4
+    assert steps.ASSEMBLE_AND_RENDER.label == "Putting your care plan together"
+    assert steps.REVIEW.number == 5
+    assert steps.REVIEW.label == "Double-checking your care plan"
+    assert steps.CORRECT.number == 6
+    assert steps.CORRECT.label == "Finishing touches"
+    retired_step_names = (
+        "SIMPLIFY" + "_LANGUAGE",
+        "CLARIFY" + "_AND_ACTION",
+        "STRUCTURE" + "_DOCUMENT",
+    )
+    assert all(not hasattr(steps, name) for name in retired_step_names)
 
 
 def test_pipeline_version_constants():

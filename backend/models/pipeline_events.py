@@ -25,8 +25,6 @@ class PipelineRunResult:
     """Emitted once at the end of a successful pipeline run."""
     care_plan: CarePlan
     term_data: dict
-    simplified: str
-    clarified: str
     raw_text: str
 
 
@@ -55,7 +53,6 @@ class AdapterResult:
     care_plan: CarePlan
     grading: Grading
     raw_text: str
-    clarified_text: str
 
 
 @dataclass

@@ -31,21 +31,20 @@ class Constants:
         # enqueued. Not a practical limit on real clinical documents (even a
         # long chart is well under 100K chars) -- exists only to fail fast on
         # a pathological input, with enormous headroom below the model's
-        # input context. The output ceiling is Llm.MAX_TOKENS_LONG_FORM, not this.
+        # input context. The output ceiling is Llm.MAX_TOKENS_LONG_FORM, not
+        # this.
+        #
+        # This is now the ONLY input-length cap. PRD 09 removed the sibling
+        # byte cap that existed purely to keep this text under Firestore's
+        # 1,048,576-byte document limit; input text no longer touches
+        # Firestore at all (it moves to a GCS object -- see
+        # services.care_plan_input.upload_job_input/load_job_input), so that
+        # limit no longer applies. No substitute byte cap is needed: GCS has
+        # no comparable size ceiling at these scales, and this char cap alone
+        # bounds worst-case UTF-8 size to 4 * MAX_TEXT_LENGTH bytes (~2 MB),
+        # a non-issue for a GCS write/read or this pipeline's existing LLM
+        # token budgets.
         MAX_TEXT_LENGTH: int = 500_000
-
-        # UTF-8-encoded BYTE budget, enforced alongside MAX_TEXT_LENGTH (char
-        # count alone doesn't bound bytes for non-ASCII text). HAZARD: sized
-        # to keep the full care_plan_outputs Firestore doc under the 1,048,576
-        # byte (1 MiB) hard document limit -- Firestore measures size in
-        # UTF-8 bytes, not codepoints, so e.g. 500K CJK chars is ~1.5 MB.
-        # Exceeding this previously caused an uncaught Firestore write
-        # failure (500) instead of a clean 400 (edge-case review Finding 1).
-        # 350,000 B leaves a large safety margin below the ~896,576 B
-        # actually available for input_text once job metadata and the
-        # trimmed output_data reserve are accounted for -- do not raise this
-        # without re-deriving that budget.
-        MAX_TEXT_BYTES: int = 350_000
 
         # Minimum stripped-text length (chars) for a file/document to count
         # as real content rather than noise. Applied in
@@ -63,13 +62,18 @@ class Constants:
         class PIPELINE_STEPS(Enum):
             """Named steps of the care-plan pipeline. Each member carries its
             1-based step number (`.number`) and its user-facing progress label
-            (`.label`); replaces the old bare `dict[int, str]` so call sites
-            reference named members instead of int literals."""
-            READ_NOTE          = (1, "Reading your note")
-            DETECT_TERMS       = (2, "Finding difficult and medical terms")
-            SIMPLIFY_LANGUAGE  = (3, "Simplifying language")
-            CLARIFY_AND_ACTION = (4, "Clarifying actions and numbers")
-            STRUCTURE_DOCUMENT = (5, "Organizing your care plan")
+            (`.label`). Six members now, not five: the inverted pipeline (brief
+            §2.5, §3.1) runs four sequential LLM calls (ground, assemble_and_render,
+            review, correct) instead of three (simplify, clarify, structure).
+            Labels are patient-facing progress copy — never name an internal
+            concept ("grounding", "ledger", "citation check") the patient has no
+            reason to see."""
+            READ_NOTE           = (1, "Reading your note")
+            DETECT_TERMS        = (2, "Finding difficult and medical terms")
+            GROUND              = (3, "Finding the facts in your note")
+            ASSEMBLE_AND_RENDER = (4, "Putting your care plan together")
+            REVIEW              = (5, "Double-checking your care plan")
+            CORRECT             = (6, "Finishing touches")
 
             def __new__(cls, number: int, label: str):
                 obj = object.__new__(cls)
@@ -101,6 +105,7 @@ class Constants:
     class Deadlines:
         SINGLE_JOB_INTERNAL_DEADLINE_S: int = 270
         JOB_TIMEOUT_SECONDS_SINGLE: int = 300
+        GLOSSARY_CURATION_TIMEOUT_S: int = 20
 
     class Llm:
         MODEL_DEFAULT: str = "gemini-1.5-pro"
@@ -136,16 +141,6 @@ class Constants:
             SAM            = _GradingMethodBase("SAM", "SAM (Doak et al. 1996) — automated approximation of content, literacy demand, and layout/typography domains")
             CDC_CCI        = _GradingMethodBase("CDC CCI", "CDC Clear Communication Index — automated approximation of main message, behavioral recommendations, numbers, and call-to-action items")
 
-    class Enums:
-        class SOURCE(Enum):
-            DOCUMENTS = "documents"
-            RECORDING = "recording"
-            NOTES     = "notes"
-
-        class IMPORTANCE(Enum):
-            HIGH = "high"
-            LOW  = "low"
-
     class EnvVars:
         GCS_BUCKET: str = "GCP_BUCKET_NAME"
         GCP_PROJECT_ID: str = "GCP_PROJECT_ID"
@@ -162,6 +157,7 @@ class Constants:
         FLASK_ENV: str = "FLASK_ENV"
         SERVICE_MODE: str = "SERVICE_MODE"
         TRUSTED_PROXY_HOPS: str = "TRUSTED_PROXY_HOPS"
+        CORS_ALLOWED_ORIGINS: str = "CORS_ALLOWED_ORIGINS"
 
     class Observability:
         SERVICE_NAME_DEFAULT: str = "backend-processing"

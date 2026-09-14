@@ -22,5 +22,13 @@
     "link": null,
     "description": "A list of common medical abbreviations and their full expansions.",
     "notes": "Dotted letter variants are matched automatically at runtime, so bid also matches b.i.d."
+  },
+  {
+    "id": "llm_proposed",
+    "name": "Proposed by the glossary curation model (not from a fixed dictionary)",
+    "fileName": null,
+    "link": null,
+    "description": "Generated for medical jargon the dictionary did not contain. Not verified against a fixed reference source; kept identifiable and auditable via this distinct source label.",
+    "notes": "Distinct from every dictionary-backed source so unsourced definitions never masquerade as one."
   }
 ]

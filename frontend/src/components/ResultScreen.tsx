@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import CarePlanView from './CarePlanView';
-import type { CarePlanInternal } from '../types/envelope';
+import type { CarePlanInternal, Grading, SimplifiedCarePlan } from '../types/envelope';
 import type { JobDoc } from '../hooks/useJobSnapshot';
 import { deleteJob } from '../api/api';
-import { downloadReport } from '../utils/downloadReport';
+import { downloadReport, DownloadReportError } from '../utils/downloadReport';
 import { trackEvent } from '../analytics/ga';
 import ErrorBoundary from './ErrorBoundary';
 
@@ -17,6 +17,27 @@ interface ResultScreenProps {
 export default function ResultScreen({ jobDoc, jobId, deletedRef, onRestart }: ResultScreenProps) {
   const trackedRef = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  // downloadReport runs from a plain onClick handler, not React render -- a
+  // throw here would otherwise be an unhandled exception the visitor never
+  // sees anything for (the button just silently does nothing). Catch it and
+  // show the same inline error-box treatment used everywhere else on this
+  // screen instead of a silent failure.
+  function handleDownload(carePlan: SimplifiedCarePlan, grading: Grading) {
+    setDownloadError(null);
+    try {
+      downloadReport(carePlan, grading);
+    } catch (err) {
+      const message = err instanceof DownloadReportError
+        ? err.message
+        : 'Something went wrong preparing your report. Please try again.';
+      if (!(err instanceof DownloadReportError)) {
+        console.error('ResultScreen: downloadReport failed', err);
+      }
+      setDownloadError(message);
+    }
+  }
 
   // Move focus to this screen's heading on arrival: ResultScreen mounts fresh exactly
   // once per completed/errored job, announcing "results have arrived" to
@@ -119,11 +140,12 @@ export default function ResultScreen({ jobDoc, jobId, deletedRef, onRestart }: R
               shape, degrade to a message here instead of losing the whole
               result screen (or, absent the app-root boundary, the whole page). */}
           <ErrorBoundary title="We couldn't display your care plan" onReset={onRestart}>
-            <CarePlanView result={care_plan} hideLowPriority />
+            <CarePlanView result={care_plan} />
           </ErrorBoundary>
-          <button className="cta-btn" onClick={() => downloadReport(care_plan, grading)}>
+          <button className="cta-btn" onClick={() => handleDownload(care_plan, grading)}>
             Download report
           </button>
+          {downloadError && <p className="error-box">{downloadError}</p>}
         </>
       ) : (
         <p className="error-box">Your care plan details couldn't be loaded, but processing did finish.</p>

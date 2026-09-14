@@ -20,7 +20,7 @@ def derive_output_name(
 
     Priority (each result capped at 60 chars):
     1. reason_for_visit[0].reason (title-cased)
-    2. diagnosis.main_conclusion first sentence
+    2. diagnosis.details[0].plain_name (or .title)
     3. source_filename stem (if not '' and not 'text_input')
     4. group_fallback (e.g. '{group} {input_id}' for batch)
     5. 'Appointment'
@@ -32,11 +32,11 @@ def derive_output_name(
             if reason:
                 return reason.title()[:60]
         diagnosis = care_plan_data.get("diagnosis") or {}
-        main = (diagnosis.get("main_conclusion") or "").strip()
-        if main:
-            first_sentence = main.split(".")[0].strip()
-            if first_sentence:
-                return first_sentence[:60]
+        details = diagnosis.get("details") or []
+        if details:
+            label = (details[0].get("plain_name") or details[0].get("title") or "").strip()
+            if label:
+                return label[:60]
     except Exception:
         pass
     filename = source_filename or ""
@@ -102,10 +102,6 @@ def extract_text_from_html(html_content: bytes) -> str:
 # ---------------------------------------------------------------------------
 # String formatting (used by services/care_plan_input.py)
 # ---------------------------------------------------------------------------
-
-def source_separator(filename: str) -> str:
-    return f"\n\n--- Source: {filename} ---\n"
-
 
 def text_artifact_filename(filename: str) -> str:
     stem = filename.rsplit(".", 1)[0] if "." in filename else filename

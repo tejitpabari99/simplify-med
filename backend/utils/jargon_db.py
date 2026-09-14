@@ -47,7 +47,7 @@ def _sources() -> list:
     # Read once per process; source metadata is static.
     return _load_json(_SOURCES_PATH)
 
-def _get_source_name(source_key: str) -> str:
+def get_source_name(source_key: str) -> str:
     # Resolve friendly source name once so downstream hits carry readable provenance.
     # sources.json is a JSON array, not {"sources": [...]}.
     try:
@@ -76,7 +76,7 @@ def _is_exact_term_alias(term: str, normalized_lookup_term: str) -> bool:
 def _plain_language_rows() -> tuple[dict, ...]:
     # Flatten records into normalized lookup rows for fast deterministic scans.
     records = _load_json(_AHRQ_PATH)
-    source = _get_source_name("ahrq_plain_language")
+    source = get_source_name("ahrq_plain_language")
     rows: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
@@ -120,7 +120,7 @@ def _plain_language_rows() -> tuple[dict, ...]:
 def _medical_rows() -> tuple[dict, ...]:
     # Build dictionary rows with conservative inflections for broader recall.
     records = _load_json(_MICHIGAN_PATH)
-    source = _get_source_name("michigan_medical_dictionary")
+    source = get_source_name("michigan_medical_dictionary")
     rows: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
@@ -166,7 +166,7 @@ def _medical_rows() -> tuple[dict, ...]:
 @lru_cache(maxsize=1)
 def _abbreviation_rows() -> tuple[dict, ...]:
     abbreviation_map = _load_json(_ABBREVIATIONS_PATH)
-    source = _get_source_name("local_abbreviations")
+    source = get_source_name("local_abbreviations")
     rows = [
         {
             "abbreviation": abbreviation,
@@ -279,13 +279,19 @@ def lookup_abbreviations(normalized_text: str) -> list[dict]:
 def build_terms_glossary(medical_term_hits: list[dict]) -> dict[str, dict]:
     """
     Build the compact terms glossary dict for the final JSON output.
-    Keys are the original term strings (title-cased as found).
-    Values: {definition, source}.
+    Keys are the literal alias each hit matched in the source text
+    (hit["matched_term"]), not the dictionary's canonical term — the
+    frontend highlights by searching body text for these exact keys
+    (CarePlanView.tsx:11,41), so the key must be a substring that can
+    actually appear there. Callers must supply Michigan-shaped hits
+    (lookup_medical_terms, curate_glossary_terms) where matched_term is
+    always present; this is a KeyError, not a silent fallback, on any
+    caller that violates that contract.
     """
     glossary: dict[str, dict] = {}
     for hit in medical_term_hits:
-        # Last write wins if duplicate terms appear in input hits.
-        glossary[hit["term"]] = {
+        # Last write wins if duplicate matched_term values appear in input hits.
+        glossary[hit["matched_term"]] = {
             "definition": hit["definition"],
             "source": hit["source"],
             "imgUrl": hit.get("imgUrl"),

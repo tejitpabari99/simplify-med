@@ -17,6 +17,8 @@ export interface GlossaryTerm {
 
 export type TermsMap = Record<string, GlossaryTerm>;
 
+export type ItemStatus = 'to_do' | 'done';
+
 export interface DiagnosisDetail {
   title: string;
   plain_name?: string;
@@ -35,33 +37,67 @@ export interface Medication {
   duration?: string;
   instructions?: string;
   side_effects_to_watch?: string;
-  change?: boolean;
-  change_description?: string;
+  change: string;          // "" means nothing to report; non-empty is a plain-language change note
+  status: ItemStatus;
+}
+
+export interface Test {
+  title: string;
+  plain_name?: string;
+  why?: string;
+  description: string;
+  preparation?: string;
+  status: ItemStatus;
+}
+
+export interface Procedure {
+  title: string;
+  plain_name?: string;
+  why?: string;
+  what_to_expect?: string;
+  timeframe?: string;
+  status: ItemStatus;
+}
+
+export interface OtherInstruction {
+  title: string;
+  why?: string;
+  steps?: string[];
+  description?: string;
+  frequency?: string;
+  duration?: string;
+  status: ItemStatus;
+}
+
+export interface FollowUp {
+  time_frame: string;
+  description: string;
+  status: ItemStatus;
 }
 
 export interface WarningSign {
   symptom: string;
   what_it_might_mean?: string;
   what_to_do: string;
-  urgency: 'emergency' | 'call_doctor' | 'monitor' | 'normal_side_effect';
+  urgency: 'emergency' | 'call_doctor' | 'monitor' | 'normal_side_effect' | null;
+  related_to?: string;
 }
 
 export interface CarePlanContent {
   summary: string;
+  summary_fact_ids: number[];   // internal provenance; never rendered (brief §3.10 — the ledger is not shown to the patient)
   reason_for_visit: Array<{ reason: string; description: string }>;
   diagnosis: {
-    main_conclusion?: string;
     changed_since_last_visit?: string;
     details: DiagnosisDetail[];
   };
   medications: Medication[];
-  tests: Array<{ title: string; plain_name?: string; why?: string; description: string; preparation?: string }>;
-  procedures: Array<{ title: string; plain_name?: string; why?: string; what_to_expect?: string; timeframe?: string }>;
-  other: Array<{ title: string; why?: string; steps?: string[]; description?: string; frequency?: string; duration?: string }>;
-  follow_up: Array<{ time_frame: string; description: string }>;
+  tests: Test[];
+  procedures: Procedure[];
+  other: OtherInstruction[];
+  follow_up: FollowUp[];
   warning_signs: WarningSign[];
   questions: string[];
   low_priority: string[];
   terms?: TermsMap;
-  additional_info?: string[];
 }

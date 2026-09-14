@@ -23,8 +23,10 @@ from utils.constants import Constants
 from services.care_plan_input import (
     resolve_uploaded_files,
     upload_combined_pdf,
+    upload_job_input,
     validate_extracted_text_length,
 )
+from services.unitizer import provenance_for_pasted_text
 from utils.markers.markers import Markers
 from utils.markers.marker import Scope
 from errors import make_error_response, ErrorCode, SimplifyError
@@ -39,12 +41,14 @@ def _resolve_job_input(user_id: str) -> dict:
     json_data = request.get_json(silent=True) or {}
     text_input = (request.form.get("text") or json_data.get("text") or "").strip()
     if text_input:
-        # Enforces the char cap, the UTF-8 byte cap (Finding 1), and rejects
-        # unstorable text such as a lone UTF-16 surrogate (Finding 5).
+        # Enforces the character cap and rejects unstorable text such as a
+        # lone UTF-16 surrogate (Finding 5).
         validate_extracted_text_length(text_input)
+        provenance = provenance_for_pasted_text(text_input)
+        input_payload_gcs_uri = upload_job_input(text_input, provenance, user_id)
         return {
             "input_source_kind": "text",
-            "input_text": text_input,
+            "input_payload_gcs_uri": input_payload_gcs_uri,
             "input_source_filename": "text_input",
             "input_pdf_gcs_uri": None,
             "input_version": Constants.Pipeline.PIPELINE_VERSION,
@@ -69,9 +73,10 @@ def _resolve_job_input(user_id: str) -> dict:
         tolerate_unusable_files=True,
     )
     pdf_gcs_uri = upload_combined_pdf(raw_pdf_bytes, user_id) if raw_pdf_bytes else None
+    input_payload_gcs_uri = upload_job_input(resolved.text, resolved.provenance, user_id)
     return {
         "input_source_kind": "upload",
-        "input_text": resolved.text,
+        "input_payload_gcs_uri": input_payload_gcs_uri,
         "input_source_filename": resolved.source_filename,
         "input_pdf_gcs_uri": pdf_gcs_uri,
         "input_version": Constants.Pipeline.PIPELINE_VERSION,
@@ -169,6 +174,9 @@ def delete_job(job_id: str, user_id: str):
             gcs_uri = data.get("input_pdf_gcs_uri")
             if gcs_uri:
                 delete_gcs_object(gcs_uri)  # best-effort; logs+swallows, never raises
+            payload_gcs_uri = data.get("input_payload_gcs_uri")
+            if payload_gcs_uri:
+                delete_gcs_object(payload_gcs_uri)  # best-effort; same as above
 
             ref.delete()
             return "", 204

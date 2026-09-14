@@ -9,7 +9,7 @@ from utils.llm import LLMClient
 from errors import ErrorCode, SimplifyError
 
 _NO_TEXT_SENTINEL = "NO_TEXT_FOUND"
-_MAX_LONG_EDGE_PX = 2048
+_MAX_LONG_EDGE_PX = 4096
 
 IMAGE_EXT_TO_MIME: dict[str, str] = {
     "png": "image/png",

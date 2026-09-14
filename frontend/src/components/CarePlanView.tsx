@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import type { TermsMap } from '../types/carePlan';
 import type { SimplifiedCarePlan } from '../types/envelope';
+import { buildNextStepsRows, NEXT_STEPS_TYPE_LABELS } from '../utils/nextSteps';
 import MedicalTerm from './MedicalTerm';
 
 function renderTextWithTerms(text: string, terms: TermsMap): ReactNode {
@@ -91,10 +92,8 @@ function ResultCard({
 
 export default function CarePlanView({
   result,
-  hideLowPriority = false,
 }: {
   result: SimplifiedCarePlan;
-  hideLowPriority?: boolean;
 }) {
   const terms = result.terms ?? {};
   const withTerms = (text: string) => renderTextWithTerms(text, terms);
@@ -135,6 +134,8 @@ export default function CarePlanView({
     normal_side_effect: 'NORMAL',
   };
   const URGENCY_ORDER: Record<string, number> = { emergency: 0, call_doctor: 1, monitor: 2, normal_side_effect: 3 };
+  const NULL_URGENCY_COLOR = '#9CA3AF'; // lighter than monitor/normal's #6B7280 -- "no info", not "low-priority-but-known"
+  const NULL_URGENCY_ORDER = 4;
 
   return (
     <div className="result-cards">
@@ -158,13 +159,8 @@ export default function CarePlanView({
         </ResultCard>
       )}
 
-      {result.diagnosis && (result.diagnosis.main_conclusion || result.diagnosis.details?.length > 0) && (
+      {result.diagnosis && result.diagnosis.details?.length > 0 && (
         <ResultCard color="teal" icon="🔍" title="What the Doctor Found">
-          {result.diagnosis.main_conclusion && (
-            <p className="narrative-headline" style={{ background: '#F0FDFA', padding: '10px', borderRadius: '8px', marginBottom: '12px' }}>
-              {withTerms(result.diagnosis.main_conclusion)}
-            </p>
-          )}
           {result.diagnosis.changed_since_last_visit && (
             <p style={{ color: '#0F766E', fontSize: '0.875rem', marginBottom: '12px' }}>
               Compared to last visit: {withTerms(result.diagnosis.changed_since_last_visit)}
@@ -190,88 +186,60 @@ export default function CarePlanView({
         </ResultCard>
       )}
 
-      {result.medications?.length > 0 && (
-        <ResultCard color="violet" icon="💊" title="Your Medications">
-          {result.medications.map((med, i) => (
-            <div key={i} style={{ borderLeft: '4px solid #3B82F6', marginBottom: '12px', background: '#F9FAFB', padding: '10px 12px', borderRadius: '0 6px 6px 0' }}>
-              <strong>{withTerms(med.plain_name ? `${med.plain_name} (${med.title})` : med.title)}</strong>
-              {med.change && <span style={{ marginLeft: '8px', color: '#D97706', fontSize: '0.8rem', fontWeight: '700' }}>[{med.change_description || 'CHANGED'}]</span>}
-              {med.why && <p style={{ color: '#1D4ED8', fontSize: '0.875rem', margin: '6px 0 4px 0' }}>Why: {withTerms(med.why)}</p>}
-              {(med.dosage || med.frequency) && (
-                <p style={{ color: '#374151', fontSize: '0.875rem', margin: '4px 0' }}>
-                  {[med.dosage, med.frequency, med.timing, med.duration].filter(Boolean).join(' · ')}
-                </p>
-              )}
-              {med.instructions && (
-                <p style={{ color: '#374151', fontSize: '0.875rem', margin: '4px 0' }}>{withTerms(med.instructions)}</p>
-              )}
-              {med.side_effects_to_watch && (
-                <p style={{ color: '#D97706', fontSize: '0.85rem', margin: '4px 0 0 0' }}>Watch for: {withTerms(med.side_effects_to_watch)}</p>
-              )}
-            </div>
-          ))}
-        </ResultCard>
-      )}
-
-      {result.tests?.length > 0 && (
-        <ResultCard color="blue" icon="🧪" title="Tests">
-          {result.tests.map((test, i) => (
-            <div key={i} style={{ marginBottom: '10px' }}>
-              <strong>{withTerms(test.plain_name ? `${test.plain_name} (${test.title})` : test.title)}</strong>
-              {test.why && <p style={{ color: '#1D4ED8', fontSize: '0.875rem', margin: '4px 0' }}>Why: {withTerms(test.why)}</p>}
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: '4px 0' }}>{withTerms(test.description)}</p>
-              {test.preparation && <p style={{ color: '#374151', fontSize: '0.85rem', margin: '4px 0 0 0' }}>Prepare: {withTerms(test.preparation)}</p>}
-            </div>
-          ))}
-        </ResultCard>
-      )}
-
-      {result.procedures?.length > 0 && (
-        <ResultCard color="violet" icon="🏥" title="Procedures">
-          {result.procedures.map((procedure, i) => (
-            <div key={i} style={{ marginBottom: '10px' }}>
-              <strong>{withTerms(procedure.plain_name ? `${procedure.plain_name} (${procedure.title})` : procedure.title)}</strong>
-              {procedure.why && <p style={{ color: '#1D4ED8', fontSize: '0.875rem', margin: '4px 0' }}>Why: {withTerms(procedure.why)}</p>}
-              {procedure.what_to_expect && <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: '4px 0' }}>What to expect: {withTerms(procedure.what_to_expect)}</p>}
-              {procedure.timeframe && <p style={{ color: '#374151', fontSize: '0.85rem', margin: '4px 0 0 0' }}>Timeframe: {withTerms(procedure.timeframe)}</p>}
-            </div>
-          ))}
-        </ResultCard>
-      )}
-
-      {result.other?.length > 0 && (
-        <ResultCard color="gray" icon="ℹ️" title="Other Instructions" collapsible defaultOpen={true}>
-          {result.other.map((item, i) => (
-            <div key={i} style={{ marginBottom: '10px' }}>
-              <strong>{withTerms(item.title)}</strong>
-              {item.why && <p style={{ color: '#1D4ED8', fontSize: '0.875rem', margin: '4px 0' }}>Why: {withTerms(item.why)}</p>}
-              {item.description && <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: '4px 0' }}>{withTerms(item.description)}</p>}
-              {(item.steps?.length ?? 0) > 0 && (
-                <ul className="result-list">
-                  {item.steps?.map((step, stepIndex) => <li key={stepIndex}>{withTerms(step)}</li>)}
-                </ul>
-              )}
-              {(item.frequency || item.duration) && (
-                <p style={{ color: '#374151', fontSize: '0.85rem', margin: '4px 0 0 0' }}>
-                  {[item.frequency, item.duration].filter(Boolean).join(' · ')}
-                </p>
-              )}
-            </div>
-          ))}
-        </ResultCard>
-      )}
+      {(() => {
+        const rows = buildNextStepsRows(result);
+        return rows.length > 0 && (
+          <ResultCard color="violet" icon="✅" title="Next Steps">
+            {rows.map((row, i) => {
+              const isDone = row.status === 'done';
+              return (
+                <div key={i} className="next-step-row" style={{ marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                    <span aria-hidden="true" className="next-step-checkbox"
+                      style={{ color: isDone ? '#059669' : '#9CA3AF', fontSize: '1.1rem' }}>
+                      {isDone ? '☑' : '☐'}
+                    </span>
+                    <span className="sr-only">{isDone ? 'Done: ' : 'To do: '}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                        <strong style={isDone ? { color: 'var(--text-secondary)', textDecoration: 'line-through' } : undefined}>
+                          {withTerms(row.title)}
+                        </strong>
+                        <span className="next-step-type-label">{NEXT_STEPS_TYPE_LABELS[row.type]}</span>
+                      </div>
+                      {row.why && <p style={{ color: '#1D4ED8', fontSize: '0.875rem', margin: '4px 0 0 0' }}>Why: {withTerms(row.why)}</p>}
+                      {row.detail && <p style={{ color: '#374151', fontSize: '0.875rem', margin: '4px 0 0 0' }}>{withTerms(row.detail)}</p>}
+                      {row.change && (
+                        <p style={{ color: '#D97706', fontSize: '0.8rem', fontWeight: '700', margin: '4px 0 0 0' }}>
+                          Changed: {withTerms(row.change)}
+                        </p>
+                      )}
+                      {(row.steps?.length ?? 0) > 0 && (
+                        <ul className="result-list" style={{ marginTop: '4px' }}>
+                          {row.steps?.map((step, si) => <li key={si}>{withTerms(step)}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </ResultCard>
+        );
+      })()}
 
       {result.warning_signs?.length > 0 && (
         <ResultCard color="gray" icon="⚠️" title="What to Watch For">
           {[...result.warning_signs]
-            .sort((a, b) => (URGENCY_ORDER[a.urgency] ?? 4) - (URGENCY_ORDER[b.urgency] ?? 4))
+            .sort((a, b) => (a.urgency ? URGENCY_ORDER[a.urgency] : NULL_URGENCY_ORDER)
+                          - (b.urgency ? URGENCY_ORDER[b.urgency] : NULL_URGENCY_ORDER))
             .map((sign, i) => {
-              const color = URGENCY_COLORS[sign.urgency] ?? '#6B7280';
+              const color = sign.urgency ? URGENCY_COLORS[sign.urgency] : NULL_URGENCY_COLOR;
               return (
                 <div key={i} style={{ borderLeft: `4px solid ${color}`, paddingLeft: '12px', marginBottom: '10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <strong>{withTerms(sign.symptom)}</strong>
-                    <span style={{ color, fontSize: '0.75rem', fontWeight: '700' }}>[{URGENCY_LABELS[sign.urgency] ?? sign.urgency}]</span>
+                    {sign.urgency && <span style={{ color, fontSize: '0.75rem', fontWeight: '700' }}>[{URGENCY_LABELS[sign.urgency]}]</span>}
                   </div>
                   {sign.what_it_might_mean && <p style={{ color: '#6B7280', fontSize: '0.875rem', margin: '4px 0' }}>{withTerms(sign.what_it_might_mean)}</p>}
                   <p style={{ color, fontWeight: '500', fontSize: '0.875rem', margin: '4px 0 0 0' }}>{withTerms(sign.what_to_do)}</p>
@@ -313,18 +281,7 @@ export default function CarePlanView({
         </ResultCard>
       )}
 
-      {result.follow_up?.length > 0 && (
-        <ResultCard color="blue" icon="📅" title="Follow-Up">
-          {result.follow_up.map((f, i) => (
-            <div key={i} style={{ background: '#EFF6FF', padding: '10px', borderRadius: '6px', marginBottom: '6px' }}>
-              <span>{withTerms(f.description)}</span>
-              {f.time_frame && <span style={{ color: '#1D4ED8', marginLeft: '8px' }}>📅 {withTerms(f.time_frame)}</span>}
-            </div>
-          ))}
-        </ResultCard>
-      )}
-
-      {!hideLowPriority && result.low_priority?.length > 0 && (
+      {result.low_priority?.length > 0 && (
         <ResultCard color="gray" icon="ℹ️" title="Other Items From Your Visit" collapsible defaultOpen={false}>
           <ul className="result-list">
             {result.low_priority.map((item, i) => <li key={i}>{withTerms(item)}</li>)}
@@ -344,18 +301,6 @@ export default function CarePlanView({
           </div>
         </ResultCard>
       )}
-
-        {result.additional_info && result.additional_info.length > 0 && (
-          <ResultCard color="gray" icon="🔗" title="Data Sources">
-            <ul className="result-list">
-              {result.additional_info.map((path, i) => (
-                <li key={i} style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  {path}
-                </li>
-              ))}
-            </ul>
-          </ResultCard>
-        )}
     </div>
   );
 }

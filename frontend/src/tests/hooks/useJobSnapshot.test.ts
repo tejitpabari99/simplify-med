@@ -44,6 +44,48 @@ describe('useJobSnapshot', () => {
     expect(result.current.loading).toBe(false);
   });
 
+  it('passes known terminal statuses through unchanged, preserving error_data', () => {
+    const { result } = renderHook(() => useJobSnapshot('job-1'));
+    const successCb = mockOnSnapshot.mock.calls[0][1];
+    act(() => successCb({
+      exists: () => true,
+      data: () => ({ status: 'error', stage: 3, error_data: { code: 'INTERNAL_ERROR', message: 'boom' } }),
+    }));
+    expect(result.current.jobDoc).toEqual({
+      status: 'error', stage: 3, output_data: null,
+      error_data: { code: 'INTERNAL_ERROR', message: 'boom' }, name: '',
+    });
+  });
+
+  // Owner requirement: the user must never be left stuck on the spinner. If the
+  // backend ever writes a status this frontend doesn't recognize (a future
+  // status value, a bug, a partial/corrupt write), the hook must not pass it
+  // through as-is -- callers key their "are we done" routing off this value,
+  // and an unrecognized one would never match their known-terminal checks,
+  // leaving the user on ProcessingScreen until the 6-minute watchdog. Normalize
+  // to 'error' instead so the existing terminal-error UI takes over immediately.
+  it('normalizes an unrecognized status to "error", drops any error_data, and logs the raw value', () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { result } = renderHook(() => useJobSnapshot('job-1'));
+    const successCb = mockOnSnapshot.mock.calls[0][1];
+    act(() => successCb({
+      exists: () => true,
+      data: () => ({
+        status: 'some_future_status',
+        stage: 3,
+        error_data: { code: 'INTERNAL_ERROR', message: 'internal detail that must not reach the user' },
+      }),
+    }));
+    expect(result.current.jobDoc).toEqual({
+      status: 'error', stage: 3, output_data: null, error_data: null, name: '',
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('unrecognized job status'),
+      'some_future_status',
+    );
+    consoleErrorSpy.mockRestore();
+  });
+
   it('sets jobDoc=null and exists=false when the snapshot reports the doc missing', () => {
     const { result } = renderHook(() => useJobSnapshot('job-1'));
     const successCb = mockOnSnapshot.mock.calls[0][1];

@@ -40,6 +40,13 @@ export default function UploadScreen({ authState, onAuthRetry, onJobCreated }: U
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // Synchronous double-submit guard. `submitting` (state) is what disables the
+  // button, but a state update doesn't repaint the DOM until after the current
+  // event handler returns -- two clicks landing in the same tick (a fast
+  // double-click, or a repeated Enter keypress) would both see the stale
+  // `submitting === false` closure and both call createJob. A ref is read/set
+  // synchronously, so the second call in the same tick is turned away.
+  const submittingRef = useRef(false);
 
   // Move focus to this screen's heading on arrival -- this component mounts fresh on
   // initial load and every time "Start over"/"Try again" returns here.
@@ -94,7 +101,8 @@ export default function UploadScreen({ authState, onAuthRetry, onJobCreated }: U
     // Defense in depth: the Simplify button is already disabled while auth isn't ready
     // (see `disabled` above), but guard here too so a submit can never fire while the
     // anonymous session is still starting up.
-    if (authState !== 'ready') return;
+    if (authState !== 'ready' || submittingRef.current) return;
+    submittingRef.current = true;
     trackEvent({ name: 'simplify_clicked', params: { input_mode: mode, file_count: mode === 'file' ? files.length : 0 } });
     setSubmitting(true);
     setError(null);
@@ -120,6 +128,7 @@ export default function UploadScreen({ authState, onAuthRetry, onJobCreated }: U
       trackEvent({ name: 'simplify_submit_error', params: { error_code: errorCode, http_status: null } });
       setError(message);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }

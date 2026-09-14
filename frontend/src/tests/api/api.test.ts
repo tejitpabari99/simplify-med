@@ -123,6 +123,81 @@ describe('api', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
+    it('aborts and shows a friendly timeout message if the request never settles', async () => {
+      vi.useFakeTimers();
+      const mockUser = { getIdToken: vi.fn().mockResolvedValue('tok') };
+      setCurrentUser(mockUser);
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      fetchSpy.mockImplementation((_url: unknown, init?: RequestInit) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The user aborted a request.', 'AbortError'));
+        });
+      }));
+
+      const resultPromise = createJob(new FormData());
+      const assertion = expect(resultPromise).rejects.toThrow(
+        "That's taking longer than expected. Please check your connection and try again.",
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('maps a raw network fetch failure to a friendly message instead of leaking it verbatim', async () => {
+      const mockUser = { getIdToken: vi.fn().mockResolvedValue('tok') };
+      setCurrentUser(mockUser);
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'));
+
+      let caught: unknown;
+      try {
+        await createJob(new FormData());
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe("Couldn't reach the server. Please check your connection and try again.");
+      expect((caught as Error).message).not.toMatch(/failed to fetch/i);
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('shows a generic message (not the raw status/statusText) for a non-JSON 5xx error body', async () => {
+      const mockUser = { getIdToken: vi.fn().mockResolvedValue('tok') };
+      setCurrentUser(mockUser);
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      fetchSpy.mockResolvedValue(new Response('<html>Bad Gateway</html>', { status: 502, statusText: 'Bad Gateway' }));
+
+      let caught: unknown;
+      try {
+        await createJob(new FormData());
+      } catch (err) {
+        caught = err;
+      }
+
+      expect((caught as Error).message).toBe('Something went wrong on our end. Please try again.');
+      expect((caught as Error).message).not.toMatch(/502|bad gateway/i);
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('shows a generic message when the success (2xx) response body is not valid JSON', async () => {
+      const mockUser = { getIdToken: vi.fn().mockResolvedValue('tok') };
+      setCurrentUser(mockUser);
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      fetchSpy.mockResolvedValue(new Response('not json', { status: 202 }));
+
+      let caught: unknown;
+      try {
+        await createJob(new FormData());
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe('Something went wrong on our end. Please try again.');
+      consoleErrorSpy.mockRestore();
+    });
+
     it('maps a raw Firebase SDK error from getIdToken() to a plain-English message, logging the original', async () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const rawFirebaseError = new Error('Firebase: Error (auth/network-request-failed).');
