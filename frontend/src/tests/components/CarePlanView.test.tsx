@@ -119,6 +119,27 @@ describe('CarePlanView', () => {
     expect(screen.queryByText(/^Changed:/)).not.toBeInTheDocument();
   });
 
+  it('renders the "What the Doctor Found" card with the couldn\'t-confirm fallback when reason_for_visit is present but diagnosis.details is empty', () => {
+    const carePlan: SimplifiedCarePlan = {
+      summary: '', summary_fact_ids: [],
+      reason_for_visit: [{ reason: 'High blood pressure', description: 'Readings were high.' }],
+      diagnosis: { details: [] },
+      medications: [], tests: [], procedures: [], other: [], follow_up: [], warning_signs: [], questions: [], low_priority: [],
+    };
+    render(<CarePlanView result={carePlan} />);
+    expect(screen.getByText('What the Doctor Found')).toBeInTheDocument();
+    expect(screen.getByText("We couldn't confirm the specific findings from your note.")).toBeInTheDocument();
+  });
+
+  it('renders no "What the Doctor Found" card when there is no evidence of a visit', () => {
+    const carePlan: SimplifiedCarePlan = {
+      summary: '', summary_fact_ids: [], reason_for_visit: [], diagnosis: { details: [] },
+      medications: [], tests: [], procedures: [], other: [], follow_up: [], warning_signs: [], questions: [], low_priority: [],
+    };
+    render(<CarePlanView result={carePlan} />);
+    expect(screen.queryByText('What the Doctor Found')).not.toBeInTheDocument();
+  });
+
   it('never drops a null-urgency warning sign from the list', () => {
     const carePlan: SimplifiedCarePlan = {
       summary: '', summary_fact_ids: [], reason_for_visit: [], diagnosis: { details: [] },

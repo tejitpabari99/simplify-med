@@ -115,4 +115,19 @@ describe('buildPdfHtml', () => {
     const html = buildPdfHtml(carePlan);
     expect(html).not.toContain('Changed:');
   });
+
+  it('includes the couldn\'t-confirm fallback when reason_for_visit is present but diagnosis.details is empty', () => {
+    const carePlan = baseCarePlan({
+      reason_for_visit: [{ reason: 'High blood pressure', description: 'Readings were high.' }],
+      diagnosis: { details: [] },
+    });
+    const html = buildPdfHtml(carePlan);
+    expect(html).toContain("We couldn't confirm the specific findings from your note.");
+  });
+
+  it('omits the "What the Doctor Found" section when there is no evidence of a visit', () => {
+    const carePlan = baseCarePlan({ reason_for_visit: [], diagnosis: { details: [] } });
+    const html = buildPdfHtml(carePlan);
+    expect(html).not.toContain('What the Doctor Found');
+  });
 });
