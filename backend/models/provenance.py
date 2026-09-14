@@ -14,9 +14,13 @@ of the text in that range.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from .base import JsonModel
+
+ExtractionMethod = Literal["native", "ocr", "pasted"]
 
 
 class SourceSpan(JsonModel):
@@ -36,6 +40,17 @@ class SourceSpan(JsonModel):
     page: int
     start_line: int
     end_line: int
+    extraction_method: ExtractionMethod
+    """How this span's text was produced -- "native" (PyPDF2/python-docx/
+    BeautifulSoup/plain decode), "ocr" (Gemini vision transcription of an
+    image, utils.image_ocr.extract_text_from_image), or "pasted" (typed or
+    pasted directly by the user, no extraction step at all). A TRIAGE tag,
+    not a confidence score (PRD 12 SS1): it records how the text was
+    produced, never whether that production was accurate. Granularity is
+    effectively per-file today (PRD 12 SS4.2 -- no per-page OCR fallback
+    exists for PDFs), but lives on the per-(file, page) SourceSpan rather
+    than a new per-file structure so a future per-page fallback would not
+    require another schema change."""
 
 
 class JobInputPayload(JsonModel):
