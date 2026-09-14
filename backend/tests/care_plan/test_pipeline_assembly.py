@@ -116,19 +116,19 @@ def test_assemble_prompt_construction_includes_fact_for_each_category(category):
 # "Not stated" rendering
 # ---------------------------------------------------------------------------
 
-def test_assemble_and_render_accepts_not_stated_why():
+def test_assemble_and_render_accepts_null_why():
     pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
     facts = [Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1, text="x")]
     pipeline._generate_json = lambda *a, **k: {
         **_minimal_care_plan_response(),
         "medications": [
-            {"why": "Not stated in your note.", "status": "to_do", "source_fact_ids": [1]}
+            {"why": None, "status": "to_do", "source_fact_ids": [1]}
         ],
     }
 
     result = pipeline.assemble_and_render(facts, [], [], [])
 
-    assert result.medications[0].why == "Not stated in your note."
+    assert result.medications[0].why is None
     assert result.medications[0].source_fact_ids == [1]
 
 
@@ -511,9 +511,9 @@ def test_verify_assembly_thin_field_log_never_contains_clinical_text(caplog):
     assert any(str(len(thin_text)) in record.message for record in caplog.records)
 
 
-def test_verify_assembly_does_not_flag_not_stated_sentinel_as_thin(caplog):
+def test_verify_assembly_does_not_flag_null_why_as_thin(caplog):
     model = CarePlan(
-        medications=[_make_item("medications", [1], why="Not stated in your note.")]
+        medications=[_make_item("medications", [1], why=None)]
     )
     facts = [Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1, text="a")]
 

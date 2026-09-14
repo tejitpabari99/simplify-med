@@ -111,17 +111,17 @@ def test_correct_applies_correct_op_to_exactly_the_named_field():
     assert result.summary == before.summary
 
 
-def test_correct_applies_not_stated_to_exact_sentinel_text():
+def test_correct_applies_not_stated_by_nulling_the_field():
     pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
     before = _base_care_plan()
     corrections = [Correction(op="not_stated", path="medications[0].why")]
     after_dict = copy.deepcopy(before.model_dump(mode="json"))
-    after_dict["medications"][0]["why"] = "Not stated in your note."
+    after_dict["medications"][0]["why"] = None
     pipeline._generate_json = lambda *a, **k: after_dict
 
     result = pipeline.correct(before, corrections, [], [], [])
 
-    assert result.medications[0].why == "Not stated in your note."
+    assert result.medications[0].why is None
 
 
 def test_correct_applies_remove_on_array_item():
