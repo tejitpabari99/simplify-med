@@ -132,6 +132,17 @@ def test_assemble_and_render_accepts_null_why():
     assert result.medications[0].source_fact_ids == [1]
 
 
+def test_assemble_and_render_normalizes_llm_empty_string_why_to_none():
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    facts = [Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1, text="x")]
+    pipeline._generate_json = lambda *a, **k: {
+        **_minimal_care_plan_response(),
+        "medications": [{"why": "", "status": "to_do", "source_fact_ids": [1]}],
+    }
+    result = pipeline.assemble_and_render(facts, [], [], [])
+    assert result.medications[0].why is None
+
+
 def test_assemble_prompt_not_stated_rule_names_all_four_why_fields():
     from care_plan.pipeline import _ASSEMBLE_PROMPT
 
