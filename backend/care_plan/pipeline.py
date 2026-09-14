@@ -459,10 +459,12 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
         )
         updates["summary_fact_ids"] = [i for i in model.summary_fact_ids if i in valid_ids]
 
+    multi_fact_counts: dict[str, int] = {}
     for field in _ITEM_LIST_FIELDS:
         items = getattr(model, field)
         kept = []
         changed = False
+        multi_fact = 0
         for item in items:
             cited = [i for i in item.source_fact_ids if i in valid_ids]
             if not cited:
@@ -481,7 +483,11 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
                 )
                 item = item.model_copy(update={"source_fact_ids": cited})
                 changed = True
+            if len(cited) > 1:
+                multi_fact += 1
             kept.append(item)
+        if multi_fact:
+            multi_fact_counts[field] = multi_fact
         if changed:
             updates[field] = kept
 
@@ -537,6 +543,19 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
 
     result = model.model_copy(update=updates) if updates else model
     _check_numeric_parity(result, facts)   # PRD 10 R3 -- log-only, never mutates `result`
+
+    total_multi_fact = sum(multi_fact_counts.values())
+    logger.info(
+        "assemble_and_render: %d item(s) across %d section(s) cite more than "
+        "one fact -- candidate near-duplicate merges (a superset: an item "
+        "legitimately built from several complementary facts also counts), "
+        "by section: %s",
+        total_multi_fact, len(multi_fact_counts), multi_fact_counts,
+        extra={"merge_candidate_signal": {
+            "total": total_multi_fact, "by_section": multi_fact_counts,
+        }},
+    )
+
     return result
 
 
