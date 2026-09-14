@@ -371,7 +371,22 @@ def _format_facts_for_prompt(facts: list[Fact]) -> str:
     return "\n".join(lines)
 
 
-_ITEM_LIST_FIELDS = ("medications", "tests", "procedures", "other", "follow_up", "warning_signs")
+_ITEM_LIST_FIELDS = (
+    "reason_for_visit", "medications", "tests", "procedures", "other", "follow_up", "warning_signs",
+)
+
+# Every top-level CarePlan field must appear in exactly one of the three
+# sets below (PRD 18 S7.5) -- this is what turns "a new field was added
+# with no soundness decision" into a failing test instead of a silent gap,
+# the exact failure mode this PRD exists to close for diagnosis/reason_for_visit.
+_SOUNDNESS_CHECKED_FIELDS = frozenset(_ITEM_LIST_FIELDS) | {"diagnosis", "summary"}
+_SOUNDNESS_EXEMPT_FIELDS = {
+    "questions": "deliberately ungrounded by design (brief S2.5) -- PRD 18 S4.1",
+    "low_priority": "demoted low-stakes content, LLM fidelity review only, no deterministic check -- PRD 18 S4.6",
+    "terms": "glossary entries from a fixed reference wordlist, not a model-asserted clinical claim -- PRD 18 S4.1",
+    "note": "upload metadata, never model output -- PRD 18 S4.1",
+}
+_SOUNDNESS_NOT_APPLICABLE_FIELDS = {"doc_type", "version", "summary_fact_ids"}
 
 # Content-richness floor (PRD 04 §9, resolving the prior [DEFERRED] item) --
 # reuses 03's _is_informative_quote / _QUOTE_MIN_LENGTH /
@@ -467,6 +482,56 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
             kept.append(item)
         if changed:
             updates[field] = kept
+
+    # diagnosis is the one nested container on CarePlan -- model.diagnosis.details
+    # is a list of DiagnosisDetail one level below CarePlan itself, so it cannot
+    # sit in the flat _ITEM_LIST_FIELDS loop above. Handled as a second, dedicated
+    # block, mirroring _log_thin_fields' own precedent (a flat loop, then one
+    # dedicated loop for model.diagnosis.details) for the same reason: exactly
+    # one nested container exists on the whole schema (PRD 18 §4.1's field
+    # audit), and a generalized nested-path descriptor for a single occurrence
+    # is speculative complexity this project's posture argues against.
+    diagnosis_updates: dict = {}
+
+    kept_details: list = []
+    details_changed = False
+    for detail in model.diagnosis.details:
+        cited = [i for i in detail.source_fact_ids if i in valid_ids]
+        if not cited:
+            logger.warning(
+                "assemble_and_render: dropping unbacked diagnosis.details item -- "
+                "source_fact_ids=%r cited nothing in the ledger", detail.source_fact_ids,
+            )
+            details_changed = True
+            continue
+        if len(cited) != len(detail.source_fact_ids):
+            logger.warning(
+                "assemble_and_render: dropping hallucinated source_fact_ids on a "
+                "diagnosis.details item: %s",
+                [i for i in detail.source_fact_ids if i not in valid_ids],
+            )
+            detail = detail.model_copy(update={"source_fact_ids": cited})
+            details_changed = True
+        kept_details.append(detail)
+    if details_changed:
+        diagnosis_updates["details"] = kept_details
+
+    if model.diagnosis.changed_since_last_visit:
+        cited = [i for i in model.diagnosis.changed_since_last_visit_fact_ids if i in valid_ids]
+        if not cited:
+            logger.warning(
+                "assemble_and_render: dropping uncited diagnosis.changed_since_last_visit "
+                "claim (len=%d) -- source_fact_ids=%r cited nothing in the ledger",
+                len(model.diagnosis.changed_since_last_visit),
+                model.diagnosis.changed_since_last_visit_fact_ids,
+            )
+            diagnosis_updates["changed_since_last_visit"] = ""
+            diagnosis_updates["changed_since_last_visit_fact_ids"] = []
+        elif len(cited) != len(model.diagnosis.changed_since_last_visit_fact_ids):
+            diagnosis_updates["changed_since_last_visit_fact_ids"] = cited
+
+    if diagnosis_updates:
+        updates["diagnosis"] = model.diagnosis.model_copy(update=diagnosis_updates)
 
     result = model.model_copy(update=updates) if updates else model
     _check_numeric_parity(result, facts)   # PRD 10 R3 -- log-only, never mutates `result`
