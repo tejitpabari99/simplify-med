@@ -40,7 +40,8 @@ see [`docs/deployment.md`](docs/deployment.md)) running the **same container ima
 distinguished only by a `SERVICE_MODE` environment variable. `juno-api` is the public,
 unauthenticated front door; it creates a Firestore job document and enqueues a Cloud Task.
 `juno-worker` is reachable only via Cloud Tasks (OIDC-verified) and runs the actual pipeline: deterministic term detection
-followed by three sequential calls to Gemini on Vertex AI. The browser never polls an
+followed by four sequential LLM calls on Vertex AI (`ground`, `assemble_and_render`,
+`review`, `correct`). The browser never polls an
 HTTP endpoint for status — it attaches a live Firestore listener to the job document.
 
 Full detail: [`docs/architecture.md`](docs/architecture.md).
@@ -97,9 +98,13 @@ frontend/   React + Vite + TypeScript single-page app
 
 | Doc | Covers |
 |---|---|
+| [`docs/flow.md`](docs/flow.md) | Recommended starting point: one request traced end to end, upload to rendered care plan, with a sequence diagram |
 | [`docs/architecture.md`](docs/architecture.md) | Topology, request/job lifecycle, API surface, Firestore/Cloud Tasks/GCS roles, frontend structure |
-| [`docs/pipeline.md`](docs/pipeline.md) | Input extraction and OCR, the five pipeline stages, term detection, the three Gemini calls, readability scoring, error taxonomy |
+| [`docs/pipeline.md`](docs/pipeline.md) | Input extraction and unitization, OCR, the four LLM calls and their deterministic checks, the glossary thread, readability scoring |
+| [`docs/error-taxonomy.md`](docs/error-taxonomy.md) | The error-code split, failure categories, and which pipeline step can produce which error |
 | [`docs/data-and-privacy.md`](docs/data-and-privacy.md) | Anonymous auth, every deletion path, retention timing, safety statements |
+| [`docs/testing.md`](docs/testing.md) | What each backend test layer checks, plus a frontend pointer |
+| [`docs/uncalibrated-constants.md`](docs/uncalibrated-constants.md) | The register of reasoned-not-measured constants |
 | [`docs/deployment.md`](docs/deployment.md) | GCP prerequisites, GitHub Actions secrets/variables, one-time manual setup, how the deploy workflow works |
 | [`docs/local-development.md`](docs/local-development.md) | Running both halves locally, environment variables, test suites |
 
