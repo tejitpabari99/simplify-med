@@ -52,6 +52,7 @@ def test_storage_namespace():
 def test_observability_namespace():
     assert Constants.Observability.SERVICE_NAME_DEFAULT == "backend-processing"
     assert "user_id" in Constants.Observability.LOG_EXTRA_KEYS
+    assert "merge_candidate_signal" in Constants.Observability.LOG_EXTRA_KEYS
     assert "extraction_signal" in Constants.Observability.LOG_EXTRA_KEYS
     assert "extraction_signal_facts" in Constants.Observability.LOG_EXTRA_KEYS
     assert Constants.Observability.DIM_OUTCOME == "OpOutcome"
