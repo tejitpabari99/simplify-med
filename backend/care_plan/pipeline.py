@@ -478,7 +478,26 @@ _UNIT_WORD_MAX_LENGTH = 15  # reasoned, not calibrated (PRD 10 §4.2): long enou
 # that it can't silently swallow the start of the next clinical word if a
 # unit is missing.
 
-_UNIT_WORD_RE = r"%|[A-Za-z][A-Za-z%/]{0,14}"
+_UNIT_WORD_RE = rf"%|[A-Za-z][A-Za-z%/]{{0,{_UNIT_WORD_MAX_LENGTH - 1}}}"
+
+# Reasoned, not calibrated (PRD 10 review): a closed vocabulary of clinical
+# units/counts, used only to decide whether a slash pair ("4/12") is a bare
+# date or a unit-bearing ratio (_BARE_DATE_RE) and to keep an arbitrary
+# following word (a drug or person name) out of the numeric-parity log
+# (_check_numeric_parity). Deliberately not the same thing as _UNIT_WORD_RE,
+# which stays a permissive shape-only match for the tokenizer itself.
+_KNOWN_UNIT_WORDS: frozenset[str] = frozenset({
+    "%", "mg", "mcg", "µg", "ug", "g", "gm", "kg", "lb", "lbs", "oz",
+    "ml", "l", "dl", "cc", "unit", "units", "iu", "meq", "mmol", "mmhg",
+    "bpm", "mg/dl", "mmol/l", "g/dl", "mg/kg", "mcg/kg", "miu/ml", "u/l",
+    "tablet", "tablets", "tab", "tabs", "pill", "pills", "capsule",
+    "capsules", "cap", "caps", "puff", "puffs", "drop", "drops", "spray",
+    "sprays", "patch", "patches", "cup", "cups", "tsp", "tbsp",
+    "teaspoon", "teaspoons", "tablespoon", "tablespoons", "dose", "doses",
+    "inch", "inches", "cm", "mm", "hour", "hours", "hr", "hrs", "minute",
+    "minutes", "min", "day", "days", "week", "weeks", "month", "months",
+    "year", "years",
+})
 
 _NUMBER_TOKEN_RE = re.compile(
     r"""
@@ -511,7 +530,21 @@ def _normalize_number(raw: str) -> str:
 
 
 _TIME_OF_DAY_RE = re.compile(r"\b\d{1,2}:\d{2}\b")
-_BARE_DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b(?![ \t]*[A-Za-z%])")
+
+# A slash pair is a unit-bearing ratio, not a bare date, only when followed
+# by a *known* unit word -- not just any word (PRD 10 review: the original
+# `[A-Za-z%]` lookahead matched literally any following word, so "4/12 with
+# cardiology" was misread as unit-bearing and never excluded as a date).
+# "%" needs no trailing \b (it isn't a word character); every other known
+# unit word must end at one, so "4/120mg" doesn't count "mg0" as "mg".
+_bare_date_alpha_units = sorted((w for w in _KNOWN_UNIT_WORDS if w != "%"), key=len, reverse=True)
+_BARE_DATE_UNIT_LOOKAHEAD = (
+    r"(?:%|(?:" + "|".join(re.escape(w) for w in _bare_date_alpha_units) + r")\b)"
+)
+_BARE_DATE_RE = re.compile(
+    r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b(?![ \t]*" + _BARE_DATE_UNIT_LOOKAHEAD + r")",
+    re.IGNORECASE,
+)
 _MONTH_NAMES = (
     "january", "february", "march", "april", "may", "june", "july", "august",
     "september", "october", "november", "december",
@@ -528,10 +561,12 @@ def _excluded_spans(text: str) -> list[tuple[int, int]]:
     parity comparison (PRD 10 §4.2's disclosed blind spot -- see there for
     why). _BARE_DATE_RE's negative lookahead is what lets a unit-bearing
     slash pair ("158/96 mmHg", "1/2 tablet") fall through untouched --
-    only a slash pair with nothing unit-shaped after it is excluded. Any
-    number token merely overlapping one of these spans is dropped, not just
-    one fully contained in it -- a trailing "AM"/"PM"/word captured as that
-    token's unit could otherwise leak the minutes out of a time-of-day span."""
+    only a slash pair followed by a *known* unit word (_KNOWN_UNIT_WORDS),
+    not just any following word, is kept; every other slash pair is excluded
+    as a bare date. Any number token merely overlapping one of these spans
+    is dropped, not just one fully contained in it -- a trailing "AM"/"PM"/
+    word captured as that token's unit could otherwise leak the minutes out
+    of a time-of-day span."""
     spans = [m.span() for m in _TIME_OF_DAY_RE.finditer(text)]
     spans += [m.span() for m in _BARE_DATE_RE.finditer(text)]
     spans += [m.span() for m in _WRITTEN_DATE_RE.finditer(text)]
@@ -601,11 +636,16 @@ def _check_numeric_parity(model: CarePlan, facts: list[Fact]) -> None:
                 continue
             found += 1
             if num in backing_numbers:
+                # PHI/PII guard (PRD 10 review): `unit` is whatever word the
+                # tokenizer found after the number -- for an unrecognized
+                # word that can be a drug or person name, not a unit at all.
+                # Only log it when it's a known unit (or empty).
+                safe_unit = unit if unit == "" or unit in _KNOWN_UNIT_WORDS else "<non-unit word>"
                 logger.warning(
                     "assemble_and_render: numeric parity -- %s[%s].%s has a "
                     "value matching a cited fact's number but with a "
                     "different or missing unit (unit=%r)",
-                    field, index, attr, unit,
+                    field, index, attr, safe_unit,
                 )
             else:
                 logger.warning(

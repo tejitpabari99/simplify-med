@@ -11,7 +11,10 @@ from care_plan.pipeline import (
     _check_numeric_parity,
     _excluded_spans,
     _extract_number_tokens,
+    _KNOWN_UNIT_WORDS,
     _normalize_number,
+    _UNIT_WORD_MAX_LENGTH,
+    _UNIT_WORD_RE,
     _verify_assembly,
 )
 from models.ledger import Fact
@@ -116,6 +119,104 @@ def test_extract_number_tokens_returns_empty_set_for_pure_word_frequency():
 def test_excluded_spans_covers_time_and_date_shapes():
     spans = _excluded_spans("Take at 7:30 AM on April 12.")
     assert len(spans) >= 2
+
+
+# ---------------------------------------------------------------------------
+# PRD 10 review fixes: closed unit vocabulary for date exclusion, and
+# non-unit words never reaching the log.
+# ---------------------------------------------------------------------------
+
+def test_extract_number_tokens_excludes_bare_date_followed_by_arbitrary_word():
+    """A bare date followed by ANY word (not a known unit) must still be
+    excluded as a date -- the original `[A-Za-z%]` lookahead matched any
+    following word at all, so "4/12 with cardiology" was misread as
+    unit-bearing and never excluded."""
+    assert _extract_number_tokens("Follow up 4/12 with cardiology.") == set()
+    assert _extract_number_tokens("return 4/12 for labs") == set()
+
+
+def test_extract_number_tokens_keeps_slash_pair_followed_by_known_unit():
+    assert _extract_number_tokens("1/2 tablet") == {("1/2", "tablet")}
+    assert ("5/10", "mg") in _extract_number_tokens("5/10 mg daily")
+    assert _extract_number_tokens("3/4 cup") != set()
+
+
+def test_extract_number_tokens_keeps_slash_pair_followed_by_slash_unit():
+    assert _extract_number_tokens("4/12 mg/dL") == {("4/12", "mg/dl")}
+
+
+def test_numeric_parity_does_not_flag_bare_date_followed_by_unrelated_word(caplog):
+    fact = Fact(id=1, category="follow_up", unit_id=1, char_start=0, char_end=1,
+                text="Next visit 4/12.")
+    item = _make_item("follow_up", [1], time_frame="Follow up 4/12 with cardiology.")
+    model = CarePlan(follow_up=[item])
+
+    with caplog.at_level(logging.WARNING):
+        _verify_assembly(model, [fact])
+
+    assert _numeric_parity_records(caplog) == []
+
+
+def test_numeric_parity_does_not_flag_bare_date_with_different_trailing_words(caplog):
+    fact = Fact(id=1, category="follow_up", unit_id=1, char_start=0, char_end=1,
+                text="Follow-up 4/12 with cardiology")
+    item = _make_item("follow_up", [1], time_frame="Follow up 4/12 at the clinic.")
+    model = CarePlan(follow_up=[item])
+
+    with caplog.at_level(logging.WARNING):
+        _verify_assembly(model, [fact])
+
+    assert _numeric_parity_records(caplog) == []
+
+
+def test_numeric_parity_unit_mismatch_log_never_leaks_a_non_unit_word(caplog):
+    """PHI guard: when a rendered field's number matches a cited fact's
+    number but the following word is not a real unit (e.g. a drug name
+    swapped in), the log must never contain that word -- only the
+    '<non-unit word>' placeholder."""
+    fact = Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1,
+                text="take 5 tablets")
+    item = _make_item("medications", [1], instructions="Take 5 Methamphetamine tablets")
+    model = CarePlan(medications=[item])
+
+    with caplog.at_level(logging.WARNING):
+        _verify_assembly(model, [fact])
+
+    records = _numeric_parity_records(caplog)
+    assert any(
+        "medications[0].instructions" in r.message and "different or missing unit" in r.message
+        for r in records
+    )
+    for record in caplog.records:
+        assert "methamphetamine" not in record.message.lower()
+    assert any("<non-unit word>" in r.message for r in records)
+
+
+def test_numeric_parity_unit_mismatch_still_logs_a_known_unit(caplog):
+    """Existing mg-vs-mL behavior is unchanged: a real unit is still logged
+    verbatim (not replaced with the placeholder)."""
+    fact = Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1,
+                text="warfarin 5 mg")
+    item = _make_item("medications", [1], dosage="5 mL")
+    model = CarePlan(medications=[item])
+
+    with caplog.at_level(logging.WARNING):
+        _verify_assembly(model, [fact])
+
+    records = _numeric_parity_records(caplog)
+    assert any("unit='ml'" in r.message for r in records)
+    assert not any("<non-unit word>" in r.message for r in records)
+
+
+def test_unit_word_re_is_derived_from_max_length_constant():
+    assert f"{{0,{_UNIT_WORD_MAX_LENGTH - 1}}}" in _UNIT_WORD_RE
+
+
+def test_known_unit_words_is_lowercase_frozenset():
+    assert isinstance(_KNOWN_UNIT_WORDS, frozenset)
+    assert all(w == w.lower() for w in _KNOWN_UNIT_WORDS)
+    assert "mg" in _KNOWN_UNIT_WORDS
+    assert "tablet" in _KNOWN_UNIT_WORDS
 
 
 # ---------------------------------------------------------------------------
