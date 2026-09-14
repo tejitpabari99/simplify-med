@@ -185,6 +185,72 @@ def test_assemble_and_render_preserves_merged_diagnosis_variants():
     assert "right" in description
 
 
+def test_assemble_and_render_preserves_merged_diagnosis_variants_three_way():
+    """Regression fixture for brainstorm.v1.md §5's named risk: 'merging
+    near-duplicate findings may quietly lose an anatomical variant.' Uses
+    three sites, not two, deliberately -- two is the number the prompt's
+    own worked example uses, so a two-site fixture cannot distinguish
+    genuine generalization from copying the example verbatim."""
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    facts = [Fact(id=1, category="diagnosis", unit_id=1, char_start=0, char_end=1, text="x")]
+    pipeline._generate_json = lambda *a, **k: {
+        **_minimal_care_plan_response(),
+        "diagnosis": {
+            "changed_since_last_visit": "",
+            "details": [
+                {
+                    "title": "Coronary artery disease",
+                    "plain_name": "clogged heart arteries",
+                    "description": (
+                        "heavy calcified plaque in your right coronary, "
+                        "left anterior descending, and circumflex arteries"
+                    ),
+                    "what_it_means_for_you": "",
+                    "severity": None,
+                    "source_fact_ids": [1],
+                }
+            ],
+        },
+    }
+
+    result = pipeline.assemble_and_render(facts, [], [], [])
+
+    description = result.diagnosis.details[0].description
+    assert "right coronary" in description
+    assert "left anterior descending" in description
+    assert "circumflex" in description
+
+
+def test_assemble_and_render_merged_item_carries_all_source_fact_ids():
+    """The merge signal this PRD keeps (§4.1): a merged item's
+    source_fact_ids length is the free, always-available 'a merge may
+    have happened here' marker. This fixture proves it survives
+    _verify_assembly's citation-existence check (PRD 04 §4.4) intact --
+    a merge is not itself flagged as a hallucination just because it
+    cites more than one fact."""
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    facts = [
+        Fact(id=1, category="tests", unit_id=1, char_start=0, char_end=1, text="x"),
+        Fact(id=2, category="tests", unit_id=2, char_start=0, char_end=1, text="y"),
+    ]
+    pipeline._generate_json = lambda *a, **k: {
+        **_minimal_care_plan_response(),
+        "tests": [
+            {
+                "description": "elevated readings on your left and right arm blood pressure cuffs",
+                "status": "done",
+                "source_fact_ids": [1, 2],
+            }
+        ],
+    }
+
+    result = pipeline.assemble_and_render(facts, [], [], [])
+
+    assert result.tests[0].source_fact_ids == [1, 2]
+    assert "left" in result.tests[0].description
+    assert "right" in result.tests[0].description
+
+
 # ---------------------------------------------------------------------------
 # Questions cap (_verify_assembly level)
 # ---------------------------------------------------------------------------
