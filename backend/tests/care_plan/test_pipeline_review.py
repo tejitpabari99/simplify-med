@@ -31,7 +31,7 @@ def _care_plan_with_two_medications() -> CarePlan:
         summary="You came in for care.",
         medications=[
             _medication(dosage="10 mg", why="Prescribed for your condition."),
-            _medication(dosage="20 mg", why="Not stated in your note."),
+            _medication(dosage="20 mg", why=None),
         ],
     )
 
