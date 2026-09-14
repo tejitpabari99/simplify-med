@@ -3,6 +3,8 @@ for grounding (PRD 03 §7.3). Uses real Unit/Fact/_GroundedFactRaw fixtures
 throughout -- only the prompt-construction tests touch a monkeypatched
 _generate_json; everything else exercises pure, deterministic functions."""
 
+import logging
+
 import pytest
 
 from care_plan.pipeline import (
@@ -22,15 +24,21 @@ from utils.term_detection import format_abbreviations_for_prompt
 from utils.text_normalization import normalize_text, normalize_with_offsets
 
 
+def _unit(**overrides) -> Unit:
+    fields = dict(id=1, file="note.pdf", page=1, line=1, text="hello", extraction_method="native")
+    fields.update(overrides)
+    return Unit(**fields)
+
+
 # ---------------------------------------------------------------------------
 # Prompt-construction tests
 # ---------------------------------------------------------------------------
 
 def test_format_units_for_prompt_groups_consecutive_same_page_units_under_one_header():
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="first line"),
-        Unit(id=2, file="note.pdf", page=1, line=2, text="second line"),
-        Unit(id=3, file="note.pdf", page=1, line=3, text="third line"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="first line", extraction_method="native"),
+        Unit(id=2, file="note.pdf", page=1, line=2, text="second line", extraction_method="native"),
+        Unit(id=3, file="note.pdf", page=1, line=3, text="third line", extraction_method="native"),
     ]
 
     result = _format_units_for_prompt(units)
@@ -45,9 +53,9 @@ def test_format_units_for_prompt_groups_consecutive_same_page_units_under_one_he
 
 def test_format_units_for_prompt_emits_new_header_on_page_change():
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="first line"),
-        Unit(id=2, file="note.pdf", page=1, line=2, text="second line"),
-        Unit(id=3, file="note.pdf", page=2, line=1, text="third line"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="first line", extraction_method="native"),
+        Unit(id=2, file="note.pdf", page=1, line=2, text="second line", extraction_method="native"),
+        Unit(id=3, file="note.pdf", page=2, line=1, text="third line", extraction_method="native"),
     ]
 
     result = _format_units_for_prompt(units)
@@ -58,8 +66,8 @@ def test_format_units_for_prompt_emits_new_header_on_page_change():
 
 def test_format_units_for_prompt_emits_new_header_on_file_change():
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="first line"),
-        Unit(id=2, file="other.pdf", page=1, line=1, text="second line"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="first line", extraction_method="native"),
+        Unit(id=2, file="other.pdf", page=1, line=1, text="second line", extraction_method="native"),
     ]
 
     result = _format_units_for_prompt(units)
@@ -71,8 +79,8 @@ def test_format_units_for_prompt_emits_new_header_on_file_change():
 def test_ground_builds_prompt_with_abbreviations_and_units():
     pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Pt to cont. metoprolol 25mg BID"),
-        Unit(id=2, file="note.pdf", page=1, line=2, text="Follow up in two weeks for bloodwork"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Pt to cont. metoprolol 25mg BID", extraction_method="native"),
+        Unit(id=2, file="note.pdf", page=1, line=2, text="Follow up in two weeks for bloodwork", extraction_method="native"),
     ]
     abbreviations = [{"term": "BID", "expansion": "twice daily"}]
     captured: dict = {}
@@ -272,7 +280,7 @@ def test_normalize_with_offsets_matches_normalize_text():
 
 def test_verify_ledger_drops_fact_citing_unknown_unit_id():
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily", extraction_method="native"),
     ]
     drafts = [
         _GroundedFactRaw(category="medications", unit_id=1, quote="warfarin 5mg", text="Take warfarin 5mg daily."),
@@ -288,7 +296,7 @@ def test_verify_ledger_drops_fact_citing_unknown_unit_id():
 
 def test_verify_ledger_drops_fact_with_fabricated_quote():
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Pt to cont. metoprolol 25mg BID"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Pt to cont. metoprolol 25mg BID", extraction_method="native"),
     ]
     drafts = [
         _GroundedFactRaw(
@@ -309,7 +317,7 @@ def test_verify_ledger_drops_fact_with_fabricated_quote():
 
 def test_verify_ledger_drops_fact_failing_informativeness_floor():
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient to continue with metoprolol 25mg"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient to continue with metoprolol 25mg", extraction_method="native"),
     ]
     drafts = [
         _GroundedFactRaw(category="medications", unit_id=1, quote="with", text="uninformative fact"),
@@ -327,7 +335,7 @@ def test_verify_ledger_drops_fact_failing_informativeness_floor():
 
 def test_verify_ledger_populates_char_start_and_char_end_from_quote():
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Pt to cont. metoprolol 25mg BID"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Pt to cont. metoprolol 25mg BID", extraction_method="native"),
     ]
     drafts = [
         _GroundedFactRaw(
@@ -352,9 +360,9 @@ def test_verify_ledger_populates_char_start_and_char_end_from_quote():
 
 def test_verify_ledger_renumbers_surviving_facts_contiguously():
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily"),
-        Unit(id=2, file="note.pdf", page=1, line=2, text="Follow up in two weeks for bloodwork"),
-        Unit(id=3, file="note.pdf", page=1, line=3, text="Continue metoprolol 25mg BID"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily", extraction_method="native"),
+        Unit(id=2, file="note.pdf", page=1, line=2, text="Follow up in two weeks for bloodwork", extraction_method="native"),
+        Unit(id=3, file="note.pdf", page=1, line=3, text="Continue metoprolol 25mg BID", extraction_method="native"),
     ]
     drafts = [
         _GroundedFactRaw(category="medications", unit_id=1, quote="warfarin 5mg", text="Take warfarin 5mg daily."),
@@ -373,9 +381,9 @@ def test_verify_ledger_renumbers_surviving_facts_contiguously():
 
 def test_verify_ledger_preserves_order_of_surviving_facts():
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Continue metoprolol 25mg BID"),
-        Unit(id=2, file="note.pdf", page=1, line=2, text="Patient started on warfarin 5mg daily"),
-        Unit(id=3, file="note.pdf", page=1, line=3, text="Follow up in two weeks for bloodwork"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Continue metoprolol 25mg BID", extraction_method="native"),
+        Unit(id=2, file="note.pdf", page=1, line=2, text="Patient started on warfarin 5mg daily", extraction_method="native"),
+        Unit(id=3, file="note.pdf", page=1, line=3, text="Follow up in two weeks for bloodwork", extraction_method="native"),
     ]
     # Deliberately out of category-sort order (follow_up before medications)
     # to prove _verify_ledger doesn't resort survivors by category or anything else.
@@ -404,7 +412,7 @@ def test_verify_ledger_drops_fact_whose_quote_normalizes_to_empty():
     # substring of everything.
     unit_text = "Patient has hypertension and continues lisinopril"
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text=unit_text),
+        Unit(id=1, file="note.pdf", page=1, line=1, text=unit_text, extraction_method="native"),
     ]
     drafts = [
         _GroundedFactRaw(
@@ -434,8 +442,8 @@ def test_verify_ledger_drops_quote_normalizing_to_empty_against_empty_unit():
     # _locate_quote_offsets(quote, "") raised an unhandled IndexError
     # instead of _verify_ledger cleanly dropping the draft.
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text=""),
-        Unit(id=2, file="note.pdf", page=1, line=2, text="   "),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="", extraction_method="native"),
+        Unit(id=2, file="note.pdf", page=1, line=2, text="   ", extraction_method="native"),
     ]
     drafts = [
         _GroundedFactRaw(
@@ -460,7 +468,7 @@ def test_verify_ledger_drops_quote_normalizing_to_empty_against_empty_unit():
 def test_ground_raises_when_verified_ledger_is_empty():
     pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily", extraction_method="native"),
     ]
     pipeline._generate_json = lambda *args, **kwargs: [
         {"category": "medications", "unit_id": 999, "quote": "warfarin 5mg", "text": "cites nonexistent unit"},
@@ -484,7 +492,7 @@ def test_ground_validation_error_detail_excludes_patient_content():
     error's structural `loc`/`type` (see `_validation_error_detail`)."""
     pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily", extraction_method="native"),
     ]
     marker = "PATIENT_MARKER_XYZ"
     pipeline._generate_json = lambda *args, **kwargs: [
@@ -500,3 +508,74 @@ def test_ground_validation_error_detail_excludes_patient_content():
     assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
     assert marker not in exc_info.value.detail
     assert "category" in exc_info.value.detail
+
+
+# ---------------------------------------------------------------------------
+# Extraction-signal logging tests (PRD 12 SS4.8.2/SS4.8.3)
+# ---------------------------------------------------------------------------
+
+def test_ground_logs_extraction_signal_aggregate_for_verified_facts(caplog):
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    units = [
+        _unit(id=1, text="Patient started on warfarin 5mg daily", extraction_method="native"),
+        _unit(id=2, text="Continue metoprolol 25mg BID", extraction_method="native"),
+        _unit(id=3, text="Follow up in two weeks for bloodwork", extraction_method="ocr"),
+    ]
+    pipeline._generate_json = lambda *args, **kwargs: [
+        {"category": "medications", "unit_id": 1, "quote": "warfarin 5mg", "text": "Take warfarin 5mg daily."},
+        {"category": "medications", "unit_id": 2, "quote": "metoprolol 25mg", "text": "Continue metoprolol 25mg."},
+        {"category": "follow_up", "unit_id": 3, "quote": "bloodwork", "text": "Get bloodwork done."},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        facts = pipeline.ground(units, [])
+
+    assert len(facts) == 3
+    signal_records = [
+        record for record in caplog.records
+        if hasattr(record, "extraction_signal_facts")
+    ]
+    assert len(signal_records) == 1
+    extraction_signal_facts = signal_records[0].extraction_signal_facts
+    assert extraction_signal_facts["total"] == 3
+    assert extraction_signal_facts["ocr"] == 1
+    assert extraction_signal_facts["ocr_rate"] == pytest.approx(1 / 3)
+
+
+def test_ground_extraction_signal_omits_log_when_zero_facts_verified(caplog):
+    pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
+    units = [
+        _unit(id=1, text="Patient started on warfarin 5mg daily", extraction_method="native"),
+    ]
+    pipeline._generate_json = lambda *args, **kwargs: [
+        {"category": "medications", "unit_id": 999, "quote": "warfarin 5mg", "text": "cites nonexistent unit"},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        with pytest.raises(SimplifyError) as exc_info:
+            pipeline.ground(units, [])
+
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+    assert not any(
+        hasattr(record, "extraction_signal_facts") for record in caplog.records
+    )
+
+
+def test_verify_ledger_drop_warning_includes_extraction_method_for_ocr_unit(caplog):
+    units = [
+        _unit(id=1, text="Pt to cont. metoprolol 25mg BID", extraction_method="ocr"),
+    ]
+    drafts = [
+        _GroundedFactRaw(
+            category="medications", unit_id=1, quote="increase metoprolol to 50mg",
+            text="fabricated fact",
+        ),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="care_plan.pipeline"):
+        facts = _verify_ledger(drafts, units)
+
+    assert facts == []
+    assert any(
+        "extraction_method=ocr" in record.getMessage() for record in caplog.records
+    )
