@@ -397,9 +397,9 @@ discarded. Verified: `grep -rn "\.coverage\b" backend/` outside the review machi
 turns up nothing.
 
 The omission direction is exactly the failure mode A's evidence (Asgari et al.) identifies as
-genuinely distinct from fabrication, and it is exactly the one B's soundness-over-completeness
+genuinely distinct from fabrication, (RF) and it is exactly the one B's soundness-over-completeness
 inversion (`prds/README.md` "Consolidated open questions" item 2) made structurally invisible
-everywhere else in the pipeline. It is being computed and thrown away.
+everywhere else in the pipeline. (DJ) It is being computed and thrown away.
 
 Minimum fix: log the `present=False` fact ids with their `text` and `category` at WARNING. Better:
 fold the count into the run's structured log so the real omission rate becomes observable across
@@ -420,7 +420,7 @@ percentage as a frequency (or vice versa).
 A's Stage 3 numeracy section supplies exactly this, with negative examples: source "A1c 7.2%" must
 never render as "A1c 7.2% (above normal)." B's domain — clinical notes — is saturated with labs,
 vitals, and doses, and nothing in `_verify_assembly`'s deterministic guards or B's LANGUAGE RULES
-currently catches a model quietly adding an interpretive label to a bare number. This is a pure
+currently catches a model quietly adding an interpretive label to a bare number. (DJ) This is a pure
 prompt addition to `_style_rules.txt`, testable with two or three prompt-content regression tests in
 the style PRD 04 §7.2 already uses for other rules.
 
@@ -433,11 +433,11 @@ the *value inside a rendered field survived rendering intact*. An item that corr
 and renders its dose as "250 mg" when fact 47's text says "25 mg" passes every deterministic check
 in the pipeline — the only thing standing between that and the patient is the review LLM, which is
 (a) non-fatal by design, (b) documented in the brief's own cited literature as prone to
-rubber-stamping (arXiv:2310.08118), and (c) whose catch rate has never been measured — PRD 05 §7.5's
+rubber-stamping (arXiv:2310.08118), (RF) and (c) whose catch rate has never been measured — PRD 05 §7.5's
 injected-error protocol is specified but still unrun.
 
 A's Stage 4 protected-token parity check is the right mechanism, but its full form (a registry of
-protected fields plus hazard reason codes plus S0–S3 severity) is over-built for this product.
+protected fields plus hazard reason codes plus S0–S3 severity) is over-built for this product. (DJ)
 Reduced form: for each assembled item, tokenize numbers-with-units out of its rendered fields and
 out of the `text`/`quote_for()` of each fact in its `source_fact_ids`; if a number appears in the
 item that appears in none of its cited facts, log it. Once the false-positive rate is known from
@@ -457,7 +457,7 @@ because the check only asks whether the model's quote matches the unit's stored 
 that text was reliably extracted in the first place. This is, as the brief itself notes in its
 OCR-ceiling discussion, the one failure mode invisible to every other safeguard in the design —
 raising the downscale ceiling 2048→4096px helps legibility but does nothing to flag the residual
-misreads that remain.
+misreads that remain. (DJ)
 
 All the plumbing points already exist — the image/OCR branch of extraction is a distinct code path
 from native PDF/DOCX/TXT/HTML extraction. Add `extraction_method: Literal["native","ocr"]` to
@@ -481,7 +481,7 @@ before, as speculative generality for a consumer that doesn't exist yet.
 A requires a closed-vocabulary transformation tag
 (`copied`/`reordered`/`split`/`plain_language_substitution`/`abbreviation_expansion`/`defined_term`)
 on every claim, with a matching deterministic lint. The full taxonomy is unearned for a stateless
-product with no reviewer or downstream consumer to act on a rich tag set — but one bit targets a
+product with no reviewer or downstream consumer to act on a rich tag set (DJ) — but one bit targets a
 risk B's own brief already names in §5: "merging near-duplicate findings may quietly lose an
 anatomical variant." A boolean `merged` flag makes merged items findable in logs and in the one
 fixture the brief already wants (the left/right coronary artery merge case), at a fraction of A's
@@ -497,7 +497,7 @@ evidence ledger mapping each claim to its source and role. B's PRDs do something
 judgment" from "this number is a guess we haven't calibrated yet." B has several uncalibrated
 constants that are honestly flagged in prose but not systematically distinguishable from decisions
 backed by evidence: `_MAX_PII_TOKEN_DELTA=4`, `_QUOTE_MIN_LENGTH=12`,
-`GLOSSARY_CURATION_TIMEOUT_S=20`. Adopting A's RF/DJ/PD tagging convention in future design docs
+`GLOSSARY_CURATION_TIMEOUT_S=20`. (PD) Adopting A's RF/DJ/PD tagging convention in future design docs
 (starting with this branch's own follow-on work) costs nothing but discipline and would make exactly
 this kind of "is this evidenced or guessed" question answerable at a glance.
 
