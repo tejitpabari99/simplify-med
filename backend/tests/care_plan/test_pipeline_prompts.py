@@ -198,3 +198,55 @@ def test_style_rules_is_non_empty_and_shared():
     # not merely copied.
     assert "Doctor Alok Singh" in _STYLE_RULES
     assert "Doctor Alok Singh" not in _ASSEMBLE_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# 6. NUMERACY content-regression tests (PRD 10 §4.1, §7.1)
+# ---------------------------------------------------------------------------
+
+def test_style_rules_contains_numeracy_block():
+    assert "NUMERACY" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_added_label():
+    assert "blood pressure 158/96" in _STYLE_RULES
+    assert "unless the fact itself uses that word" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_reference_range():
+    assert "normal range 4.0-5.6%" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_rounding():
+    assert "ejection fraction 42%" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_unit_conversion():
+    assert "creatinine 1.4 mg/dL" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_percentage_frequency_reframe():
+    assert "3 out of 10 times" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_permits_source_stated_interpretation():
+    assert "indicating poor control" in _STYLE_RULES
+
+
+def test_assemble_and_correct_prompts_both_receive_numeracy_block():
+    assembled = _ASSEMBLE_PROMPT.format(
+        schema="{}",
+        facts_block="[1] medications: x",
+        style_rules=_STYLE_RULES,
+        sub_block="s",
+        medical_block="m",
+        abbrev_block="a",
+    )
+    corrected = _CORRECT_PROMPT.format(
+        corrections_block="c",
+        style_rules=_STYLE_RULES,
+        care_plan_block="{}",
+        schema="{}",
+    )
+    assert "NUMERACY" in assembled
+    assert "NUMERACY" in corrected
