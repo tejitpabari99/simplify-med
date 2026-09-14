@@ -259,13 +259,15 @@ def _verify_ledger(drafts: list[_GroundedFactRaw], units: list[Unit]) -> list[Fa
         if not _is_verbatim_quote(draft.quote, unit.text):
             logger.warning(
                 "grounding: dropping fact citing unit_id=%d -- quote not found "
-                "verbatim in unit text (category=%s)", draft.unit_id, draft.category,
+                "verbatim in unit text (category=%s, extraction_method=%s)",
+                draft.unit_id, draft.category, unit.extraction_method,
             )
             continue
         if not _is_informative_quote(draft.quote):
             logger.warning(
                 "grounding: dropping fact citing unit_id=%d -- quote fails "
-                "informativeness floor (category=%s)", draft.unit_id, draft.category,
+                "informativeness floor (category=%s, extraction_method=%s)",
+                draft.unit_id, draft.category, unit.extraction_method,
             )
             continue
         char_start, char_end = _locate_quote_offsets(draft.quote, unit.text)
@@ -280,6 +282,29 @@ def _verify_ledger(drafts: list[_GroundedFactRaw], units: list[Unit]) -> list[Fa
             )
         )
     return [fact.model_copy(update={"id": i}) for i, fact in enumerate(verified, start=1)]
+
+
+def _log_grounding_extraction_signal(facts: list[Fact], units_by_id: dict[int, Unit]) -> None:
+    """One INFO-level, per-run aggregate of how many VERIFIED facts cite an
+    OCR-extracted unit (PRD 12 SS4.8.2) -- log-only, mirrors 11's
+    _log_coverage_summary in shape/placement (one aggregate call sitting
+    next to the deterministic checks it summarizes, not inside them). No-op
+    for an empty ledger -- ground() raises PIPELINE_VALIDATION_FAILED for
+    that case immediately after this call anyway (SS4.5, unchanged), so
+    logging a 0/0 aggregate right before a hard failure would be noise."""
+    if not facts:
+        return
+    ocr = sum(1 for f in facts if units_by_id[f.unit_id].extraction_method == "ocr")
+    total = len(facts)
+    logger.info(
+        "grounding: %d/%d verified facts cite an OCR-extracted unit",
+        ocr, total,
+        extra={"extraction_signal_facts": {
+            "total": total,
+            "ocr": ocr,
+            "ocr_rate": ocr / total,
+        }},
+    )
 
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -712,6 +737,7 @@ class CarePlanPipeline:
                 raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=_validation_error_detail(e), original=e)
 
         verified = _verify_ledger(drafts, units)
+        _log_grounding_extraction_signal(verified, {u.id: u for u in units})
         if not verified:
             raise SimplifyError(
                 ErrorCode.PIPELINE_VALIDATION_FAILED,
