@@ -4,10 +4,13 @@ convention: direct construction via CarePlanPipeline.__new__(CarePlanPipeline)
 plus monkeypatched _generate_json, building Fact/CarePlan/ReviewResult
 fixtures directly."""
 
+import logging
+
 import pytest
 
 from care_plan.pipeline import (
     CarePlanPipeline,
+    _log_coverage_summary,
     _resolve_path,
     _sanitize_review_result,
     _targets_removed_item,
@@ -282,3 +285,118 @@ def test_review_runs_correct_from_corrections_length_not_verdict():
     assert result.verdict == "pass"
     assert len(result.corrections) == 1
     assert (len(result.corrections) > 0) is True
+
+
+# ---------------------------------------------------------------------------
+# _log_coverage_summary -- PRD 11 §7.1
+# ---------------------------------------------------------------------------
+
+def test_log_coverage_summary_all_facts_covered(caplog):
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        _log_coverage_summary(
+            [CoverageEntry(fact_id=i, present=True) for i in (1, 2, 3)],
+            _facts(3),
+        )
+
+    records = [r for r in caplog.records if r.getMessage().startswith("review: coverage signal")]
+    assert len(records) == 1
+    assert records[0].coverage_signal == {
+        "total": 3,
+        "omitted": 0,
+        "rate": 0.0,
+        "omitted_by_category": {},
+    }
+
+
+def test_log_coverage_summary_some_facts_omitted_mixed_categories(caplog):
+    facts = [
+        Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1, text="fact 1"),
+        Fact(id=2, category="medications", unit_id=1, char_start=0, char_end=1, text="fact 2"),
+        Fact(id=3, category="warning_signs", unit_id=1, char_start=0, char_end=1, text="fact 3"),
+    ]
+    coverage = [
+        CoverageEntry(fact_id=1, present=False),
+        CoverageEntry(fact_id=2, present=True),
+        CoverageEntry(fact_id=3, present=False),
+    ]
+
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        _log_coverage_summary(coverage, facts)
+
+    records = [r for r in caplog.records if r.getMessage().startswith("review: coverage signal")]
+    assert len(records) == 1
+    assert records[0].coverage_signal == {
+        "total": 3,
+        "omitted": 2,
+        "rate": pytest.approx(2 / 3, abs=1e-4),
+        "omitted_by_category": {"medications": 1, "warning_signs": 1},
+    }
+
+
+def test_log_coverage_summary_empty_coverage_and_empty_facts_logs_nothing(caplog):
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        _log_coverage_summary([], [])
+
+    assert caplog.records == []
+
+
+def test_log_coverage_summary_empty_coverage_with_nonempty_facts_treats_all_as_omitted(caplog):
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        _log_coverage_summary([], _facts(2))
+
+    records = [r for r in caplog.records if r.getMessage().startswith("review: coverage signal")]
+    assert len(records) == 1
+    assert records[0].coverage_signal["omitted"] == 2
+    assert records[0].coverage_signal["total"] == 2
+    assert records[0].coverage_signal["rate"] == 1.0
+
+
+def test_log_coverage_summary_ignores_coverage_entry_for_unknown_fact_id(caplog):
+    coverage = [
+        CoverageEntry(fact_id=1, present=True),
+        CoverageEntry(fact_id=999, present=True),
+    ]
+
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        _log_coverage_summary(coverage, _facts(1))
+
+    records = [r for r in caplog.records if r.getMessage().startswith("review: coverage signal")]
+    assert len(records) == 1
+    assert records[0].coverage_signal["omitted"] == 0
+    assert records[0].coverage_signal["total"] == 1
+
+
+def test_log_coverage_summary_extra_dict_has_exactly_four_keys(caplog):
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        _log_coverage_summary([CoverageEntry(fact_id=1, present=True)], _facts(1))
+
+    records = [r for r in caplog.records if r.getMessage().startswith("review: coverage signal")]
+    assert len(records) == 1
+    assert set(records[0].coverage_signal.keys()) == {
+        "total", "omitted", "rate", "omitted_by_category",
+    }
+
+
+def test_log_coverage_summary_message_has_no_per_fact_category_interpolation(caplog):
+    """Sanity check, not a strict requirement (PRD 11 §7.1): the human-readable
+    message stays generic/aggregate-shaped -- per-fact category detail only
+    ever goes into `extra`, never into the message string. Uses category
+    values ("warning_signs", "follow_up") that don't appear anywhere in the
+    generic message text, so a substring match here is meaningful."""
+    facts = [
+        Fact(id=1, category="warning_signs", unit_id=1, char_start=0, char_end=1, text="fact 1"),
+        Fact(id=2, category="follow_up", unit_id=1, char_start=0, char_end=1, text="fact 2"),
+    ]
+    coverage = [
+        CoverageEntry(fact_id=1, present=False),
+        CoverageEntry(fact_id=2, present=False),
+    ]
+
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        _log_coverage_summary(coverage, facts)
+
+    records = [r for r in caplog.records if r.getMessage().startswith("review: coverage signal")]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "warning_signs" not in message
+    assert "follow_up" not in message
