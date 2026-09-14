@@ -170,6 +170,7 @@ class Constants:
             "service", "environment",
             "extraction_signal", "extraction_signal_facts",
             "coverage_signal",
+            "merge_candidate_signal",   # PRD 14
         ]
         DIM_OUTCOME: str = "OpOutcome"
         DIM_STATUS_CODE: str = "StatusCode"
