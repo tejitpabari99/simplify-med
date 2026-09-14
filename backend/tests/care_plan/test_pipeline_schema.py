@@ -58,8 +58,8 @@ def test_grounding_schema_is_a_json_array_of_grounded_fact_raw():
 def test_ground_assigns_sequential_ids_from_array_position():
     pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
     units = [
-        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily"),
-        Unit(id=2, file="note.pdf", page=1, line=2, text="Follow up in two weeks for bloodwork"),
+        Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily", extraction_method="native"),
+        Unit(id=2, file="note.pdf", page=1, line=2, text="Follow up in two weeks for bloodwork", extraction_method="native"),
     ]
     pipeline._generate_json = lambda *args, **kwargs: [
         {
@@ -92,7 +92,7 @@ def test_ground_rejects_non_list_llm_output():
 
 def test_ground_rejects_extra_key_on_fact():
     pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
-    units = [Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily")]
+    units = [Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily", extraction_method="native")]
     pipeline._generate_json = lambda *args, **kwargs: [
         {
             "category": "medications",
@@ -110,7 +110,7 @@ def test_ground_rejects_extra_key_on_fact():
 
 def test_ground_uses_long_form_token_budget_and_json_temperature():
     pipeline = CarePlanPipeline.__new__(CarePlanPipeline)
-    units = [Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily")]
+    units = [Unit(id=1, file="note.pdf", page=1, line=1, text="Patient started on warfarin 5mg daily", extraction_method="native")]
     captured_kwargs = {}
 
     def _fake_generate_json(*args, **kwargs):
