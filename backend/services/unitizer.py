@@ -54,6 +54,7 @@ def unitize(text: str, provenance: list[SourceSpan]) -> list[Unit]:
                 page=span.page,
                 line=offset + 1,
                 text=line_text,
+                extraction_method=span.extraction_method,
             ))
             next_id += 1
     return units
