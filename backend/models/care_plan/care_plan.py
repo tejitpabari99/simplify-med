@@ -13,6 +13,7 @@ from utils.constants import Constants
 class ReasonForVisit(JsonModel):
     reason: str = ""
     description: str = ""
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class DiagnosisDetail(JsonModel):
@@ -21,10 +22,12 @@ class DiagnosisDetail(JsonModel):
     description: str = ""
     what_it_means_for_you: str = ""
     severity: Literal["high", "medium", "low"] | None = None
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class Diagnosis(JsonModel):
     changed_since_last_visit: str = ""
+    changed_since_last_visit_fact_ids: list[int] = Field(default_factory=list)
     details: list[DiagnosisDetail] = Field(default_factory=list)
 
 
