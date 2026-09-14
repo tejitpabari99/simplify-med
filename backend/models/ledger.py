@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Literal
 
 from .base import JsonModel
+from .provenance import ExtractionMethod
 
 # The eight categories the grounding step is prompted with (brief §3.3).
 # Deliberately spelled identically to the matching CarePlan field names
@@ -47,13 +48,19 @@ FactCategory = Literal[
 class Unit(JsonModel):
     """One deterministically-numbered span of source text. Built by the
     unitizer (02), never by an LLM. `id` is the only handle the grounding
-    LLM ever sees or cites."""
+    LLM ever sees or cites. `extraction_method` is copied verbatim from
+    the SourceSpan that produced this Unit (services.unitizer.unitize) --
+    never inferred, re-derived, or defaulted here. See
+    models.provenance.SourceSpan.extraction_method and PRD 12 for the
+    full design; this is a pure carrier field on Unit, exactly like
+    `file`/`page` already are."""
 
     id: int
     file: str
     page: int
     line: int
     text: str
+    extraction_method: ExtractionMethod
 
 
 class Fact(JsonModel):
