@@ -140,6 +140,16 @@ describe('CarePlanView', () => {
     expect(screen.queryByText('What the Doctor Found')).not.toBeInTheDocument();
   });
 
+  it('renders the not-stated fallback when a medication has a null why', () => {
+    const carePlan: SimplifiedCarePlan = {
+      summary: '', summary_fact_ids: [], reason_for_visit: [], diagnosis: { details: [] },
+      medications: [{ title: 'Lisinopril', why: null, change: '', status: 'to_do' }],
+      tests: [], procedures: [], other: [], follow_up: [], warning_signs: [], questions: [], low_priority: [],
+    };
+    render(<CarePlanView result={carePlan} />);
+    expect(screen.getByText(/Not stated in your note\./)).toBeInTheDocument();
+  });
+
   it('never drops a null-urgency warning sign from the list', () => {
     const carePlan: SimplifiedCarePlan = {
       summary: '', summary_fact_ids: [], reason_for_visit: [], diagnosis: { details: [] },

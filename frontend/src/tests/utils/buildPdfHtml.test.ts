@@ -130,4 +130,12 @@ describe('buildPdfHtml', () => {
     const html = buildPdfHtml(carePlan);
     expect(html).not.toContain('What the Doctor Found');
   });
+
+  it('renders the not-stated fallback in the generated HTML when a medication has a null why', () => {
+    const carePlan = baseCarePlan({
+      medications: [{ title: 'Lisinopril', why: null, change: '', status: 'to_do' }],
+    });
+    const html = buildPdfHtml(carePlan);
+    expect(html).toContain('Not stated in your note.');
+  });
 });
