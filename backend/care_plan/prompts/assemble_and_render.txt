@@ -10,8 +10,8 @@ FACTS (id, category, content):
 {facts_block}
 
 MAPPING -- a fact's category decides which care-plan array it becomes an item in:
-- reason_for_visit -> reason_for_visit[] (reason: a few words; description: one plain-language sentence)
-- diagnosis -> diagnosis.details[] (title, plain_name, description, what_it_means_for_you; set severity ONLY if the fact itself states a severity judgement -- otherwise leave it null, never guess). If any diagnosis fact states something changed since the last visit, put that in diagnosis.changed_since_last_visit; otherwise leave it "".
+- reason_for_visit -> reason_for_visit[] (reason: a few words; description: one plain-language sentence; source_fact_ids)
+- diagnosis -> diagnosis.details[] (title, plain_name, description, what_it_means_for_you; set severity ONLY if the fact itself states a severity judgement -- otherwise leave it null, never guess; source_fact_ids). If any diagnosis fact states something changed since the last visit, put that in diagnosis.changed_since_last_visit and list the id(s) of the fact(s) that state it in diagnosis.changed_since_last_visit_fact_ids; otherwise leave both "" and [].
 - medications -> medications[] (why, dosage, frequency, timing, duration, instructions, side_effects_to_watch, change, status, source_fact_ids)
 - tests -> tests[] (why, description, preparation, status, source_fact_ids)
 - procedures -> procedures[] (why, what_to_expect, timeframe, status, source_fact_ids)
@@ -21,7 +21,7 @@ MAPPING -- a fact's category decides which care-plan array it becomes an item in
 
 A medications fact whose content is a side effect that is merely listed, with no instruction to act on it, belongs in that medication's own side_effects_to_watch field -- never split out as a separate warning_signs item.
 
-SOURCE_FACT_IDS -- every medications, tests, procedures, other, follow_up, and warning_signs item must carry `source_fact_ids`: the id(s) of every fact you built it from (more than one id if MERGE below combines facts into one item). reason_for_visit and diagnosis items have no such field. Never leave source_fact_ids empty for an item you decide to include -- an item with no cited fact has nothing behind it and will not reach the patient.
+SOURCE_FACT_IDS -- every reason_for_visit, medications, tests, procedures, other, follow_up, and warning_signs item must carry `source_fact_ids`, and every diagnosis.details item must too: the id(s) of every fact you built it from (more than one id if MERGE below combines facts into one item). If diagnosis.changed_since_last_visit is non-empty, diagnosis.changed_since_last_visit_fact_ids must name the fact(s) that state it. Never leave any of these citation fields empty for a claim you decide to include -- a claim with no cited fact has nothing behind it and will not reach the patient.
 
 STATUS -- every medications, tests, procedures, other, and follow_up item requires status: "to_do" or "done". Never omit it and never leave it null. Use "done" if the fact states or clearly implies the item is already complete. If genuinely unclear, default to "to_do": telling a patient to do something already done costs one phone call; telling them a pending action is complete is a missed follow-up.
 
