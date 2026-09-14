@@ -32,8 +32,8 @@ Cloud Run: simplify-api  (SERVICE_MODE=api, public)
                                              ▼
                               Cloud Run: simplify-worker (SERVICE_MODE=worker, internal)
                                              │
-                                             ├─ resolve input text
-                                             ├─ run the 5-step pipeline (Vertex AI / Gemini)
+                                             ├─ resolve input text (GCS payload read)
+                                             ├─ runs the four-call pipeline (Vertex AI / Gemini)
                                              ├─ write stage updates ─▶ Firestore
                                              └─ write final result ──▶ Firestore
 
@@ -52,28 +52,45 @@ and `error_data` as the worker updates them.
    sends the resulting ID token as `Authorization: Bearer <token>` on every request.
    `POST /jobs` accepts either a `text` field (form or JSON) or one or more files under
    a `files` multipart field.
-2. **Resolve input.** `simplify-api` extracts text from the request (§3.3 in
-   [`pipeline.md`](pipeline.md) covers extraction itself), validates its length, and —
-   for file uploads — merges the accepted files into one combined PDF and uploads it to
-   Cloud Storage.
+2. **Resolve input and write the GCS input payload.** `simplify-api`
+   (`routes/jobs.py::_resolve_job_input`) extracts text — unitizing it into
+   per-(file, page) `SourceSpan` provenance rather than concatenating it with a
+   separator marker — and writes **one JSON object**, `JobInputPayload{text,
+   provenance}`, to Cloud Storage via `upload_job_input`, getting back
+   `input_payload_gcs_uri`. For a file upload, a **separate, optional** GCS write also
+   happens: `upload_combined_pdf` merges the accepted files into one audit-copy PDF
+   (PDF/TXT/image bytes merged as-is; DOCX/HTML sources merged as a rendered page of
+   their *extracted text*) and uploads it, returning `input_pdf_gcs_uri`. These are two
+   distinct GCS objects with two distinct purposes: `input_payload_gcs_uri` is what the
+   worker actually reads to run the pipeline; `input_pdf_gcs_uri` is a stored copy of
+   the original submission, for uploads only, that the pipeline never reads back. See
+   [`pipeline.md`](pipeline.md) §1 for *why* unitization needs page/line identity.
 3. **Create the job.** A Firestore document is created in `care_plan_outputs` with
-   `status="not_started"`, the resolved input, and an `expires_at` timestamp one hour in
-   the future. `POST /jobs` returns `202 {"job_id": "<uuid>"}` immediately — the
-   pipeline itself runs later, in the worker.
+   `status="not_started"`, carrying `input_payload_gcs_uri` and `input_pdf_gcs_uri`
+   (both optional-shaped on `JobDoc`, though `input_payload_gcs_uri` is always
+   populated in practice) — never raw text or provenance inline — and an `expires_at`
+   timestamp one hour in the future. `POST /jobs` returns `202 {"job_id": "<uuid>"}`
+   immediately — the pipeline itself runs later, in the worker.
 4. **Enqueue.** A Cloud Task is created against the `care-plan-jobs` queue, targeting
    `{WORKER_URL}/internal/jobs/execute/{job_id}` and signed with an OIDC token for the
    worker's service account. `simplify-api` validates the Cloud Tasks configuration
    (`CLOUD_TASKS_QUEUE`, `WORKER_URL`, `WORKER_SERVICE_ACCOUNT`) **before** writing the
    Firestore job document, so a configuration error can never leave an orphaned job doc
-   with no task behind it.
+   with no task behind it. Both the Firestore job-doc write and the Cloud Task enqueue
+   happen before `POST /jobs` returns its `202`.
 5. **Execute.** `simplify-worker` receives the signed request, verifies it really came
-   from Cloud Tasks, marks the job `status="processing"`, and runs the pipeline
-   described in [`pipeline.md`](pipeline.md), writing a `stage` update (1–5) to the job
-   document as each step starts.
+   from Cloud Tasks, marks the job `status="processing"`, calls `load_job_input(job)`
+   (one GCS read, downloading and parsing the `JobInputPayload`), then
+   `unitize(text, provenance)` to materialize `list[Unit]` in memory, then runs the
+   four-call pipeline described in [`pipeline.md`](pipeline.md), writing a `stage`
+   update **1–6** to the job document as each step starts.
 6. **Complete.** On success the worker writes the structured result to `output_data` and
    sets `status="completed"`; on an unrecoverable failure it writes `error_data` and sets
-   `status="error"`. Both paths clear the job's raw `input_text` field in the same
-   Firestore update.
+   `status="error"`. Either way, the worker's `finally` block deletes **both** GCS
+   objects — `input_pdf_gcs_uri` if present, and `input_payload_gcs_uri` (always
+   populated in practice, so this always fires). There is no Firestore field holding
+   the raw input text to clear: `JobDoc` has never had one since input text moved off
+   Firestore entirely.
 7. **Display and delete.** The browser's live listener picks up the terminal status and
    renders the result screen. The job document is deleted at that point — see
    [`data-and-privacy.md`](data-and-privacy.md) for every deletion path.
@@ -89,12 +106,18 @@ not_started ──(worker picks up the Cloud Task)──▶ processing ──▶
                                                         └────────▶ error
 ```
 
-Key fields: `uid` (the anonymous Firebase UID that owns the job), `status`, `stage`
-(1–5, set once the worker starts), `output_data` (present only on success),
-`error_data` (present only on failure), `input_source_kind` (`"text"` or `"upload"`),
-`input_text`, `input_pdf_gcs_uri`, `expires_at`, and `skipped_files` (filenames from a
-multi-file upload that were individually unusable and skipped rather than aborting the
-whole request).
+Key fields, matching `backend/models/job.py` exactly: `uid` (the anonymous Firebase UID
+that owns the job), `status`, `stage` (1–6, set once the worker starts), `output_data`
+(present only on success), `error_data` (present only on failure),
+`input_source_kind` (`"text"` or `"upload"`), `input_source_filename`,
+`input_pdf_gcs_uri`, `input_payload_gcs_uri`, `input_version`, `grading_enabled`,
+`expires_at`, and `skipped_files` (filenames from a multi-file upload that were
+individually unusable and skipped rather than aborting the whole request).
+**Neither a raw-text field nor an inline provenance field exists on this model** — a
+reader expecting one (e.g. from an old version of this doc, or from reading only the
+earlier unitization design before the GCS-transport change) would be wrong; the raw
+document and its provenance map live only in the GCS object `input_payload_gcs_uri`
+points at, never inline on `JobDoc` itself.
 
 ### Idempotency and the processing lease
 
@@ -103,9 +126,10 @@ for the same job. `routes/worker.py` handles this with a lease pattern: if a job
 already `completed` or `error`, the redelivered request is a no-op (`200`, nothing
 re-run). If a job is `processing` and its lease (time since `started_at`) is still
 within the internal deadline (`SINGLE_JOB_INTERNAL_DEADLINE_S` = 270 seconds), the
-redelivery is also treated as a no-op — this is what prevents a duplicate multi-call
-Gemini run (and duplicate billing) for the same job. If the lease has expired, the prior
-attempt is presumed crashed and the job is allowed to run again from the start.
+redelivery is also treated as a no-op — this is what prevents re-running the pipeline's
+four sequential LLM calls a second time and double-billing every Vertex AI call already
+made. If the lease has expired, the prior attempt is presumed crashed and the job is
+allowed to run again from the start.
 
 ## 3. API surface (`backend/routes/`)
 
@@ -119,8 +143,8 @@ tokens by default and both job routes opt in explicitly with `allow_anonymous=Tr
 Creates a job. Accepts one of:
 
 - **Pasted text** — a `text` field (multipart form or JSON body). Validated against a
-  500,000-character cap and, independently, a 350,000-UTF-8-byte cap (both must pass —
-  see [`pipeline.md`](pipeline.md) §5 for why both exist).
+  single 500,000-character cap (`MAX_TEXT_LENGTH`) — see [`pipeline.md`](pipeline.md)
+  §3 for why the former second, byte-count cap was removed.
 - **File upload(s)** — one or more files under a `files` multipart field. Up to 5 files,
   10 MB combined, no per-file size cap. A single unusable file (blank scan, corrupt or
   encrypted PDF, unsupported type) is skipped rather than aborting the whole request;
@@ -139,9 +163,11 @@ they are fixed server-side (currently `"v1-2"` and grading always on).
 
 ### `DELETE /jobs/<job_id>`
 
-Deletes a job document and its stored input PDF (if any). Not rate-limited — deletion is
-a cleanup action, not a cost-incurring one. Requires the caller's Firebase UID to match
-the job document's `uid`.
+Deletes a job document and both of its GCS objects, if present: the stored input PDF
+(`input_pdf_gcs_uri`, uploads only) and the input-payload object
+(`input_payload_gcs_uri`) — each deletion is best-effort and swallows its own errors.
+Not rate-limited — deletion is a cleanup action, not a cost-incurring one. Requires the
+caller's Firebase UID to match the job document's `uid`.
 
 **Response:** `204` on success, `404` if the job doesn't exist, `403` if the caller does
 not own it.
@@ -187,8 +213,8 @@ body) uses one shape:
 
 `code` is a stable machine-readable identifier, `message` is developer-facing,
 `user_hint` is safe to show a non-technical end user, and `retryable` indicates whether
-retrying the same request is likely to help. See [`pipeline.md`](pipeline.md) §6 for the
-full error taxonomy.
+retrying the same request is likely to help. See [`error-taxonomy.md`](error-taxonomy.md)
+for the full error taxonomy.
 
 ## 4. Abuse protection
 
@@ -218,12 +244,21 @@ worst-case Vertex AI spend regardless of per-IP behavior.
 - **Cloud Tasks** decouples job creation from job execution: `simplify-api` enqueues a
   task on the `care-plan-jobs` queue; the queue dispatches an OIDC-signed HTTP request to
   `simplify-worker`, which is otherwise unreachable from the public internet.
-- **Cloud Storage** stores one merged, audit-copy PDF per job that included a file
+- **Cloud Storage — merged-PDF audit copy.** One merged PDF per job that included a file
   upload, at `care_plan_inputs/{uid}/inputs/{uuid}.pdf` in the configured bucket. This is
   a stored copy of the original submission, not what the pipeline actually processes —
-  the pipeline works from extracted text. The stored PDF is deleted unconditionally at
-  the end of every job (success, failure, or exception) and also on explicit job
-  deletion.
+  the pipeline works from the extracted-text input-payload object below. Deleted
+  unconditionally at the end of every job (success, failure, or exception) and also on
+  explicit job deletion.
+- **Cloud Storage — input-payload object.** One `JobInputPayload{text, provenance}` JSON
+  object per job, at a sibling path under the same `care_plan_inputs/{uid}/inputs/`
+  prefix. Written once by `simplify-api` (`upload_job_input`), read exactly once by
+  `simplify-worker` (`load_job_input`), and deleted at job termination (worker `finally`
+  block) or on explicit job deletion — same lifecycle shape as the merged-PDF object,
+  but this is now the *only* channel carrying the note's text and provenance from API to
+  worker. Its size profile is small integers plus one filename per (file, page) span,
+  not a duplicate of the note text itself — see PRD 02 §4.1's accounting, not restated
+  here.
 
 ## 6. Frontend structure (`frontend/`)
 
@@ -239,7 +274,8 @@ A single Vite + React + TypeScript app — one build, one deployment target.
   rendered after the backend deletes the underlying document.
 - **`components/UploadScreen.tsx`** — text or file input, with client-side validation
   (`utils/validateFiles.ts`) mirroring the backend's caps.
-- **`components/ProcessingScreen.tsx`** — renders the five pipeline steps live, driven
+- **`components/ProcessingScreen.tsx`** — renders the **six** pipeline steps live
+  (`PIPELINE_STEPS`, `frontend/src/components/ProcessingScreen.tsx:25-32`), driven
   by the job document's `stage` field, with a client-side watchdog: if a job never
   reaches a terminal status within 6 minutes, a "taking longer than expected" affordance
   appears (covering the case where the worker container is killed before it can write a
@@ -247,6 +283,16 @@ A single Vite + React + TypeScript app — one build, one deployment target.
 - **`components/ResultScreen.tsx`** — renders `CarePlanView` (the structured result),
   fires the job's deletion the instant it mounts, and offers a client-generated,
   downloadable HTML report.
+- **`components/CarePlanView.tsx`** and **`utils/buildPdfHtml.ts`** — both render "We
+  couldn't confirm the specific findings from your note." in place of the diagnosis
+  details block when every `diagnosis.details` entry has been dropped but other visit
+  evidence still exists (PRD 18's widened citation-existence check, [`pipeline.md`](pipeline.md)
+  §4, can drop every detail without dropping the whole visit).
+- **`utils/nextSteps.ts`**'s `resolveWhy()` helper and `types/carePlan.ts`'s
+  `why?: string | null` type — the frontend-side fallback for a `null` `why`
+  (`Medication`/`Test`/`Procedure`/`OtherInstruction`, PRD 13): `resolveWhy()` renders
+  "Not stated in your note." whenever `why` is `null`/`undefined`, so no `care_plan.ts`
+  consumer reads `.why` directly.
 - **`hooks/useAnonAuth.ts`**, **`hooks/useJobSnapshot.ts`**, **`hooks/useUnloadCleanup.ts`**
   — anonymous sign-in with a bounded timeout and retry affordance, the live Firestore
   listener, and best-effort deletion on tab close/navigation-away (see
