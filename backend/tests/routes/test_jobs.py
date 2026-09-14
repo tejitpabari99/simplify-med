@@ -137,7 +137,13 @@ def test_post_text_job_uploads_payload_and_stores_uri(
     captured = json.loads(bucket.blob.return_value.upload_from_string.call_args.args[0])
     assert captured["text"] == text
     assert captured["provenance"] == [
-        {"file": "text_input", "page": 1, "start_line": 0, "end_line": 1}
+        {
+            "file": "text_input",
+            "page": 1,
+            "start_line": 0,
+            "end_line": 1,
+            "extraction_method": "pasted",
+        }
     ]
     payload = mock_create_doc.call_args.kwargs["payload"]
     assert payload["input_payload_gcs_uri"].startswith("gs://test-bucket/care_plan_inputs/")
