@@ -629,3 +629,52 @@ def test_verify_assembly_content_richness_check_never_mutates_or_drops():
     assert len(result.tests) == 1
     assert result.tests[0].why == "check"
     assert result.tests[0].description == "ok"
+
+
+# ---------------------------------------------------------------------------
+# merge_candidate_signal aggregate (§4.4)
+# ---------------------------------------------------------------------------
+
+def test_verify_assembly_logs_merge_candidate_signal_aggregate(caplog):
+    model = CarePlan(
+        medications=[_make_item("medications", [1, 2])],
+        tests=[_make_item("tests", [3])],
+    )
+    facts = [
+        Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1, text="a"),
+        Fact(id=2, category="medications", unit_id=1, char_start=0, char_end=1, text="b"),
+        Fact(id=3, category="tests", unit_id=1, char_start=0, char_end=1, text="c"),
+    ]
+
+    with caplog.at_level(logging.INFO):
+        _verify_assembly(model, facts)
+
+    signal_records = [r for r in caplog.records if hasattr(r, "merge_candidate_signal")]
+    assert len(signal_records) == 1
+    assert signal_records[0].merge_candidate_signal == {
+        "total": 1, "by_section": {"medications": 1},
+    }
+
+
+def test_verify_assembly_logs_merge_candidate_signal_zero_when_no_multi_fact_items(caplog):
+    model = CarePlan(medications=[_make_item("medications", [1])])
+    facts = [Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1, text="a")]
+
+    with caplog.at_level(logging.INFO):
+        _verify_assembly(model, facts)
+
+    signal_records = [r for r in caplog.records if hasattr(r, "merge_candidate_signal")]
+    assert len(signal_records) == 1
+    assert signal_records[0].merge_candidate_signal == {"total": 0, "by_section": {}}
+
+
+def test_verify_assembly_merge_candidate_count_excludes_dropped_hallucinated_ids(caplog):
+    model = CarePlan(medications=[_make_item("medications", [1, 999])])
+    facts = [Fact(id=1, category="medications", unit_id=1, char_start=0, char_end=1, text="a")]
+
+    with caplog.at_level(logging.INFO):
+        _verify_assembly(model, facts)
+
+    signal_records = [r for r in caplog.records if hasattr(r, "merge_candidate_signal")]
+    assert len(signal_records) == 1
+    assert signal_records[0].merge_candidate_signal == {"total": 0, "by_section": {}}
