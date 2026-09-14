@@ -102,6 +102,19 @@ def test_assemble_prompt_contains_merge_example():
     assert "left and right heart arteries" in _ASSEMBLE_PROMPT
 
 
+def test_assemble_prompt_contains_three_way_merge_example():
+    assert "circumflex" in _ASSEMBLE_PROMPT
+    assert "left anterior descending" in _ASSEMBLE_PROMPT
+
+
+def test_assemble_prompt_merge_rule_names_source_fact_ids():
+    merge_start = _ASSEMBLE_PROMPT.index("\nMERGE --")
+    next_section_start = _ASSEMBLE_PROMPT.index("\nLOW PRIORITY --")
+    merge_section = _ASSEMBLE_PROMPT[merge_start:next_section_start]
+
+    assert "source_fact_ids" in merge_section
+
+
 def test_assemble_prompt_questions_rule_has_no_minimum():
     assert "no minimum" in _ASSEMBLE_PROMPT
     assert "exactly three" not in _ASSEMBLE_PROMPT
