@@ -169,6 +169,7 @@ class Constants:
             "error", "labels", "duration_ms_observed", "OpOutcome",
             "service", "environment",
             "extraction_signal", "extraction_signal_facts",
+            "coverage_signal",
         ]
         DIM_OUTCOME: str = "OpOutcome"
         DIM_STATUS_CODE: str = "StatusCode"
