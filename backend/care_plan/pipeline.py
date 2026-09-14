@@ -471,6 +471,93 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
     return model.model_copy(update=updates) if updates else model
 
 
+_UNIT_WORD_MAX_LENGTH = 15  # reasoned, not calibrated (PRD 10 §4.2): long enough
+# for the longest realistic compound lab unit (mmol/L, mIU/mL), short enough
+# that it can't silently swallow the start of the next clinical word if a
+# unit is missing.
+
+_UNIT_WORD_RE = r"%|[A-Za-z][A-Za-z%/]{0,14}"
+
+_NUMBER_TOKEN_RE = re.compile(
+    r"""
+    (?P<num>
+        \d{1,3}(?:,\d{3})+(?:\.\d+)?        # 1,000 or 1,000.5
+      | \d+/\d+                             # fraction OR ratio/date shape: 1/2, 158/96, 4/12
+      | \d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?   # range: 5-10, 5.5-10.2
+      | \d+(?:\.\d+)?                       # plain integer or decimal
+    )
+    [ ]?
+    (?P<unit>""" + _UNIT_WORD_RE + r""")?
+    """,
+    re.VERBOSE,
+)
+
+
+def _normalize_number(raw: str) -> str:
+    """Canonicalize one bare number's own digits -- leading zeros, thousands
+    separators, and a trailing decimal zero are formatting, not value, per
+    the same principle assemble_and_render.txt's own worked example applies
+    to unit spacing ("25mg" -> "25 mg" is a style change). Called on each
+    component of a range/fraction separately, never on the whole thing."""
+    raw = raw.replace(",", "")
+    if "." in raw:
+        integer_part, _, frac_part = raw.partition(".")
+        frac_part = frac_part.rstrip("0")
+        integer_part = integer_part.lstrip("0") or "0"
+        return f"{integer_part}.{frac_part}" if frac_part else integer_part
+    return raw.lstrip("0") or "0"
+
+
+_TIME_OF_DAY_RE = re.compile(r"\b\d{1,2}:\d{2}\b")
+_BARE_DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b(?![ \t]*[A-Za-z%])")
+_MONTH_NAMES = (
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+)
+_WRITTEN_DATE_RE = re.compile(
+    r"\b(?:" + "|".join(_MONTH_NAMES) + r")\.?\s+\d{1,2}(?:st|nd|rd|th)?\b",
+    re.IGNORECASE,
+)
+
+
+def _excluded_spans(text: str) -> list[tuple[int, int]]:
+    """Date/time-shaped spans, dropped from BOTH sides of every numeric-
+    parity comparison (PRD 10 §4.2's disclosed blind spot -- see there for
+    why). _BARE_DATE_RE's negative lookahead is what lets a unit-bearing
+    slash pair ("158/96 mmHg", "1/2 tablet") fall through untouched --
+    only a slash pair with nothing unit-shaped after it is excluded. Any
+    number token merely overlapping one of these spans is dropped, not just
+    one fully contained in it -- a trailing "AM"/"PM"/word captured as that
+    token's unit could otherwise leak the minutes out of a time-of-day span."""
+    spans = [m.span() for m in _TIME_OF_DAY_RE.finditer(text)]
+    spans += [m.span() for m in _BARE_DATE_RE.finditer(text)]
+    spans += [m.span() for m in _WRITTEN_DATE_RE.finditer(text)]
+    return spans
+
+
+def _extract_number_tokens(text: str) -> set[tuple[str, str]]:
+    """Tokenize every number-with-optional-unit out of `text` into a set of
+    (normalized_number, normalized_unit) pairs; unit is "" when none is
+    attached. Excludes date/time-shaped spans entirely (see above); a number
+    token merely overlapping such a span is dropped, not just one fully
+    contained in it."""
+    excluded = _excluded_spans(text)
+    tokens: set[tuple[str, str]] = set()
+    for m in _NUMBER_TOKEN_RE.finditer(text):
+        if any(m.start() < e and m.end() > s for s, e in excluded):
+            continue
+        num, unit = m.group("num"), (m.group("unit") or "").lower()
+        if "/" in num:
+            num_norm = "/".join(_normalize_number(p) for p in num.split("/"))
+        elif "-" in num:
+            num_norm = "-".join(_normalize_number(p.strip()) for p in num.split("-"))
+        else:
+            num_norm = _normalize_number(num)
+        tokens.add((num_norm, unit))
+    return tokens
+
+
 _WHY_PATH_RE = re.compile(r"^(medications|tests|procedures|other)\[\d+\]\.why$")
 
 
