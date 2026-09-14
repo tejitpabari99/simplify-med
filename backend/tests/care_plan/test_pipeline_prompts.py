@@ -120,6 +120,30 @@ def test_assemble_prompt_lists_all_eight_mapping_rows():
         assert category in mapping_section
 
 
+def test_assemble_prompt_mapping_lists_source_fact_ids_for_reason_for_visit_and_diagnosis():
+    # Both "MAPPING" and "SOURCE_FACT_IDS" also appear earlier in the file's
+    # step-1 instructions ("...(see MAPPING)...(see SOURCE_FACT_IDS)..."), so a
+    # plain `.index("MAPPING")` / `.index("SOURCE_FACT_IDS")` pair lands on
+    # that sentence, not the paragraph headings below it -- the resulting
+    # slice would not contain the actual MAPPING rows at all. Anchor on the
+    # `" -- "` heading form, and search for SOURCE_FACT_IDS starting after the
+    # MAPPING heading, to isolate the real MAPPING paragraph.
+    mapping_start = _ASSEMBLE_PROMPT.index("MAPPING --")
+    mapping_section = _ASSEMBLE_PROMPT[mapping_start:_ASSEMBLE_PROMPT.index("SOURCE_FACT_IDS --", mapping_start)]
+    reason_line = next(l for l in mapping_section.splitlines() if l.startswith("- reason_for_visit"))
+    diagnosis_line = next(l for l in mapping_section.splitlines() if l.startswith("- diagnosis"))
+    assert "source_fact_ids" in reason_line
+    assert "source_fact_ids" in diagnosis_line
+
+
+def test_assemble_prompt_source_fact_ids_rule_no_longer_exempts_reason_for_visit_and_diagnosis():
+    assert "reason_for_visit and diagnosis items have no such field" not in _ASSEMBLE_PROMPT
+
+
+def test_assemble_prompt_names_changed_since_last_visit_fact_ids():
+    assert "changed_since_last_visit_fact_ids" in _ASSEMBLE_PROMPT
+
+
 # ---------------------------------------------------------------------------
 # 5. Review / correct / style_rules prompt tests (PRD 05 §7.2)
 # ---------------------------------------------------------------------------
