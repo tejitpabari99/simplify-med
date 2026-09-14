@@ -75,6 +75,16 @@
       "duration": "for 2 weeks",
       "status": "done",
       "source_fact_ids": [1]
+    },
+    {
+      "title": "Track symptoms in a log",
+      "why": null,
+      "steps": [],
+      "description": "Write down any new symptoms you notice.",
+      "frequency": "",
+      "duration": "",
+      "status": "to_do",
+      "source_fact_ids": [1]
     }
   ],
   "follow_up": [
