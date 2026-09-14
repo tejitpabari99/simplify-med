@@ -149,7 +149,9 @@ def test_upload_combined_pdf_raises_when_bucket_not_configured():
 @patch("services.care_plan_input.get_gcs_bucket")
 def test_upload_job_input_writes_json_with_text_and_provenance(mock_get_gcs_bucket):
     text = "First line\nSecond line"
-    provenance = [SourceSpan(file="notes.txt", page=1, start_line=0, end_line=1)]
+    provenance = [
+        SourceSpan(file="notes.txt", page=1, start_line=0, end_line=1, extraction_method="native")
+    ]
     blob = MagicMock()
     mock_get_gcs_bucket.return_value.blob.return_value = blob
 
@@ -180,7 +182,9 @@ def test_upload_job_input_raises_if_bucket_env_var_missing():
 
 @patch("services.care_plan_input.download_gcs_string")
 def test_load_job_input_happy_path(mock_download):
-    spans = [SourceSpan(file="notes.txt", page=1, start_line=0, end_line=0)]
+    spans = [
+        SourceSpan(file="notes.txt", page=1, start_line=0, end_line=0, extraction_method="native")
+    ]
     mock_download.return_value = json.dumps(JobInputPayload(text="hello", provenance=spans).to_dict())
     job = SimpleNamespace(input_payload_gcs_uri="gs://bucket/input.json")
 
@@ -243,6 +247,29 @@ def test_resolve_uploaded_files_image_becomes_raw_merge_candidate(mock_extract_i
     assert "Known OCR text from image" in resolved.text
     assert combined_pdf_bytes is not None
     assert "--- Source:" not in resolved.text
+
+
+@patch("services.care_plan_input.extract_text_from_image")
+def test_resolve_uploaded_files_multi_file_mixed_native_and_ocr_tags_spans_correctly(
+    mock_extract_image,
+):
+    """A single request mixing a .txt upload and an image upload must tag each
+    file's span(s) with the extraction method its own extension dispatches to
+    (PRD 12 §4.3) -- native for the txt file, ocr for the image."""
+    mock_extract_image.return_value = "Known OCR text from image"
+    uploads = [
+        _FakeUpload("notes.txt", b"This is a perfectly good clinical note."),
+        _FakeUpload("photo.png", _ONE_PX_PNG),
+    ]
+
+    resolved, _ = _resolve(uploads)
+
+    txt_spans = [s for s in resolved.provenance if s.file == "notes.txt"]
+    image_spans = [s for s in resolved.provenance if s.file == "photo.png"]
+    assert txt_spans
+    assert image_spans
+    assert all(s.extraction_method == "native" for s in txt_spans)
+    assert all(s.extraction_method == "ocr" for s in image_spans)
 
 
 # ---------------------------------------------------------------------------
