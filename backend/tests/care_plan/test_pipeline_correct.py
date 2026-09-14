@@ -199,6 +199,38 @@ def test_diff_check_passes_small_pii_substitution_on_eligible_field():
     _verify_correction_diff(before, after, corrections=[])  # no exception
 
 
+def test_diff_check_passes_when_not_stated_nulls_a_filled_why():
+    before = _base_care_plan()
+    corrections = [Correction(op="not_stated", path="medications[0].why")]
+    after = _mutate(before, lambda d: d["medications"][0].__setitem__("why", None))
+
+    _verify_correction_diff(before, after, corrections)  # no exception
+
+
+def test_diff_check_rejects_why_nulled_without_being_named():
+    before = _base_care_plan()
+    after = _mutate(before, lambda d: d["medications"][0].__setitem__("why", None))
+
+    with pytest.raises(SimplifyError) as exc_info:
+        _verify_correction_diff(before, after, corrections=[])
+    assert exc_info.value.error_code == ErrorCode.PIPELINE_VALIDATION_FAILED
+
+
+def test_diff_check_passes_when_named_correct_fills_a_null_why():
+    before = _base_care_plan(
+        medications=[
+            _medication(why=None, dosage="10 mg", source_fact_ids=[1]),
+            _medication(dosage="20 mg", source_fact_ids=[2]),
+        ]
+    )
+    corrections = [Correction(op="correct", path="medications[0].why",
+                               value="Prescribed for high blood pressure.")]
+    after = _mutate(before, lambda d: d["medications"][0].__setitem__(
+        "why", "Prescribed for high blood pressure."))
+
+    _verify_correction_diff(before, after, corrections)  # no exception
+
+
 def test_diff_check_rejects_large_rewrite_disguised_as_pii():
     before = _base_care_plan()
     after = _mutate(
