@@ -351,6 +351,14 @@ def test_numeric_parity_summary_checked_against_summary_fact_ids(caplog):
 
 
 def test_numeric_parity_skips_diagnosis_and_reason_for_visit(caplog):
+    # PRD 18 now requires diagnosis.details items to carry source_fact_ids
+    # citing a real fact in the ledger, or _verify_assembly's new diagnosis
+    # block drops them before numeric parity ever sees them. Cite a fact
+    # whose text carries none of the planted numbers below, so the detail
+    # survives citation-checking and this test can still prove numeric
+    # parity itself never checks diagnosis fields.
+    fact = Fact(id=1, category="diagnosis", unit_id=1, char_start=0, char_end=1,
+                text="Heart function was assessed during today's visit.")
     model = CarePlan(
         diagnosis=Diagnosis(
             changed_since_last_visit="",
@@ -361,13 +369,14 @@ def test_numeric_parity_skips_diagnosis_and_reason_for_visit(caplog):
                     description="Your ejection fraction is 42%, but the earlier note said 55%.",
                     what_it_means_for_you="",
                     severity=None,
+                    source_fact_ids=[1],
                 )
             ],
         ),
     )
 
     with caplog.at_level(logging.WARNING):
-        result = _verify_assembly(model, facts=[])
+        result = _verify_assembly(model, [fact])
 
     assert _numeric_parity_records(caplog) == []
     assert result.diagnosis == model.diagnosis
