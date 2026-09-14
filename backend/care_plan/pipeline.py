@@ -736,6 +736,50 @@ def _sanitize_review_result(result: ReviewResult, care_plan: CarePlan, facts: li
     return result.model_copy(update={"corrections": clean, "coverage": coverage})
 
 
+def _log_coverage_summary(coverage: list[CoverageEntry], facts: list[Fact]) -> None:
+    """Log-only consumer of the reviewer's enumerate-then-check-presence walk
+    (PRD 05 §4.3, brief §3.5) — makes the omission signal the pipeline
+    already computes and discards observable per-run, at the cost of one
+    structured log line (PRD 11 §1). Never raises, never returns a value,
+    never affects what iter_steps yields -- this is pure observability.
+
+    `present=False` here is a WEAK signal, not a verdict: an LLM asked
+    "is this present" performs near chance on omission (arXiv:2608.31016,
+    PRD 05 §1), and the coverage check's own published detection rate is
+    24.6% (brief §5's open-risk table) -- better than chance, far from
+    complete. This function does not claim otherwise; the log message
+    says so explicitly (below) so a reader of Cloud Logging doesn't
+    mistake a rate here for a validated omission measurement.
+
+    No fact text and no per-fact log line -- see PRD 11 §4.4 for why.
+    """
+    if not facts:
+        return
+    fact_by_id = {f.id: f for f in facts}
+    covered_ids = {e.fact_id for e in coverage if e.present and e.fact_id in fact_by_id}
+    omitted_ids = [fid for fid in fact_by_id if fid not in covered_ids]
+
+    total = len(fact_by_id)
+    omitted = len(omitted_ids)
+    by_category: dict[str, int] = {}
+    for fid in omitted_ids:
+        category = fact_by_id[fid].category
+        by_category[category] = by_category.get(category, 0) + 1
+
+    logger.info(
+        "review: coverage signal -- %d/%d ledger facts not flagged present by the "
+        "reviewer (rate=%.3f); WEAK signal (near-chance per-fact judgment, ~24.6%% "
+        "published detection rate) -- trend/observability only, not a per-fact verdict",
+        omitted, total, omitted / total,
+        extra={"coverage_signal": {
+            "total": total,
+            "omitted": omitted,
+            "rate": round(omitted / total, 4),
+            "omitted_by_category": by_category,
+        }},
+    )
+
+
 def _format_corrections_for_prompt(corrections: list[Correction]) -> str:
     """Render each correction as one JSON line for the correct.txt prompt's
     CORRECTIONS block (PRD 05 §4.6). No PRD-cited exact text -- any correct,
