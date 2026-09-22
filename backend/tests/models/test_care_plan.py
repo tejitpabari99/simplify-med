@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from models.care_plan import CarePlan
-from models.care_plan.care_plan import Diagnosis
+from models.care_plan.care_plan import Diagnosis, WarningSign
 from utils.constants import Constants
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "care_plan.json"
@@ -44,7 +44,6 @@ def test_care_plan_minimal_payload_uses_pipeline_defaults():
 
     assert model.version == Constants.Schema.CARE_PLAN_VERSION
     assert model.doc_type == "care_plan"
-    assert model.urgency == "normal"
     assert model.summary == ""
     assert model.reason_for_visit == []
     assert model.diagnosis == Diagnosis()
@@ -57,7 +56,6 @@ def test_care_plan_minimal_payload_uses_pipeline_defaults():
     assert model.questions == []
     assert model.low_priority == []
     assert model.terms == {}
-    assert model.raw is None
 
 
 def test_care_plan_rejects_appointment_note_doc_type():
@@ -93,3 +91,25 @@ def test_structured_llm_schema_properties_match_care_plan_structured_fields():
     schema_properties = set(_llm_schema(CarePlan, {"terms", "raw"})["properties"])
 
     assert schema_properties == structured_fields
+
+
+def test_warning_sign_requires_urgency():
+    with pytest.raises(ValidationError):
+        WarningSign(symptom="x", what_to_do="y", source_fact_ids=[])
+
+
+def test_warning_sign_accepts_null_urgency():
+    sign = WarningSign(symptom="x", what_to_do="y", urgency=None)
+    assert sign.urgency is None
+
+
+def test_medication_requires_status():
+    from models.care_plan.care_plan import Medication
+    with pytest.raises(ValidationError):
+        Medication(title="x")
+
+
+def test_medication_source_fact_ids_defaults_empty():
+    from models.care_plan.care_plan import Medication
+    med = Medication(title="x", status="to_do")
+    assert med.source_fact_ids == []

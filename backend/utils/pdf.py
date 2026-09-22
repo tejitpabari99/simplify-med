@@ -17,17 +17,44 @@ from utils.constants import Constants
 logger = logging.getLogger(__name__)
 
 
-def extract_text_from_pdf(pdf_content: bytes) -> str:
+def extract_pages_from_pdf(pdf_content: bytes) -> list[tuple[int, str]]:
+    """Extract text from a PDF, segmented by page. Returns (page_number,
+    page_text) pairs, 1-indexed in document order, for every page that
+    yields non-empty extracted text -- a page with none (e.g. a scanned
+    page with no text layer) is omitted, NOT renumbered: if page 2 of a
+    3-page PDF is blank, this returns [(1, ...), (3, ...)], preserving the
+    real page numbers so provenance built from this list points at the
+    actual page a reader would count.
+
+    Supersedes the old extract_text_from_pdf, which computed page_num
+    internally, logged it at debug level, and then discarded it by joining
+    every page into one flat string (brief brainstorm.v1.md §3.2). Page
+    boundaries are the whole point of this function's return shape now --
+    there is no longer a flat-string variant (see PRD 02 §9 on why the
+    old flat-text function is deleted outright rather than kept as a
+    thin wrapper).
+
+    Note: a page whose extracted text is present but whitespace-only is
+    also omitted (page_text.strip() check) -- the old code's `if
+    page_text:` check on the *unstripped* string would have appended an
+    empty entry to text_parts for such a page (visible only as an extra
+    "\n\n" in the old flat output, otherwise harmless). This is a small,
+    deliberate tightening: a whitespace-only page should not get its own
+    SourceSpan any more than a whitespace-only TXT/DOCX/HTML file does
+    (see extract_pages_from_bytes, PRD 02 §4.7).
+    """
     reader = PyPDF2.PdfReader(io.BytesIO(pdf_content))
-    text_parts: list[str] = []
+    pages: list[tuple[int, str]] = []
     for page_num, page in enumerate(reader.pages):
         page_text = page.extract_text()
-        if page_text:
-            text_parts.append(page_text.strip())
-            logger.debug("pdf_extract: page %d: %d chars", page_num + 1, len(page_text))
-    full_text = "\n\n".join(text_parts)
-    logger.info("pdf_extract: %d total chars from %d pages", len(full_text), len(reader.pages))
-    return full_text
+        if page_text and page_text.strip():
+            pages.append((page_num + 1, page_text.strip()))
+    total_chars = sum(len(t) for _, t in pages)
+    logger.info(
+        "pdf_extract: %d total chars from %d of %d pages",
+        total_chars, len(pages), len(reader.pages),
+    )
+    return pages
 
 
 def _txt_to_pdf(file_bytes: bytes, filename: str) -> bytes:

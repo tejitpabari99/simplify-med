@@ -1,4 +1,4 @@
-"""Tests for utils/gcs.py — GCS client construction and delete_gcs_object."""
+"""Tests for utils/gcs.py — GCS client construction and object helpers."""
 from unittest.mock import MagicMock
 
 import pytest
@@ -72,3 +72,37 @@ def test_delete_gcs_object_logs_but_does_not_raise_on_other_error(mock_gcs_modul
 def test_delete_gcs_object_warns_and_noops_on_non_gs_uri(caplog):
     from utils.gcs import delete_gcs_object
     delete_gcs_object("not-a-gs-uri")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# download_gcs_string
+# ---------------------------------------------------------------------------
+
+def test_download_gcs_string_returns_decoded_text(mock_gcs_module):
+    mock_gcs_module.download_as_text.return_value = "decoded patient input"
+
+    from utils.gcs import download_gcs_string
+
+    assert (
+        download_gcs_string("gs://my-bucket/care_plan_inputs/user-1/inputs/abc.json")
+        == "decoded patient input"
+    )
+    mock_gcs_module.download_as_text.assert_called_once()
+
+
+def test_download_gcs_string_raises_not_found_for_missing_object(mock_gcs_module):
+    from google.api_core.exceptions import NotFound
+
+    mock_gcs_module.download_as_text.side_effect = NotFound("gone")
+
+    from utils.gcs import download_gcs_string
+
+    with pytest.raises(NotFound):
+        download_gcs_string("gs://my-bucket/care_plan_inputs/user-1/inputs/missing.json")
+
+
+def test_download_gcs_string_rejects_non_gs_uri():
+    from utils.gcs import download_gcs_string
+
+    with pytest.raises(ValueError, match="non-gs:// uri=not-a-gs-uri"):
+        download_gcs_string("not-a-gs-uri")

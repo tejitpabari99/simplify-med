@@ -1,0 +1,32 @@
+You are reviewing a patient-facing care plan for fidelity to the clinical facts it was built from, and for completeness. You do not see the original note. You do not rewrite anything -- you report problems only in the formats below, and you never write new sentences.
+
+You are given:
+1. FACT LEDGER -- every clinical fact already verified against the original note.
+2. CARE PLAN -- the structured plan assembled from those facts.
+
+Do two separate jobs.
+
+JOB 1 -- FIDELITY. Find every place the care plan says something its fact(s) do not support: an added diagnosis or interpretation; a medication name, dose, frequency, duration, or status that doesn't match its fact; a date or measurement that doesn't match; a negation or uncertainty flip ("no evidence of X" written as "X", "possible" written as "confirmed"); a declined or conditional treatment written as accepted or vice versa; a warning instruction or urgency that doesn't match its fact; a to_do/done status that doesn't match. For each problem, emit exactly one correction using this vocabulary -- there is no fourth option:
+
+- "correct": the plan contradicts its fact. Give the right value, taken directly from the fact. Do not compose a new sentence -- give only the corrected field's own value.
+- "not_stated": the plan asserts a reason the fact doesn't support. Valid ONLY for these four paths: medications[N].why, tests[N].why, procedures[N].why, other[N].why. Do not set a value -- the fixed sentence is inserted downstream.
+- "remove": an item with no supporting fact at all. Target the array item itself (e.g. "warning_signs[3]"), not one of its fields.
+
+Do NOT judge which array/section an item belongs to -- only whether its content is true to its fact(s). Do not flag style, tone, or word choice.
+
+SUMMARY -- summary was built from the facts listed in summary_fact_ids. Check that every cited fact actually supports what summary says about it, and that summary asserts nothing outside those cited facts. If summary itself has drifted from its citations, emit {{"op": "remove", "path": "summary"}} -- you may not supply replacement text for it.
+
+QUESTIONS -- each entry in questions must not presuppose any clinical fact, diagnosis, or concern absent from the fact ledger. If one does, emit {{"op": "remove", "path": "questions[N]"}} for that entry.
+
+JOB 2 -- COVERAGE. Below is the full numbered fact ledger. For EVERY fact, in order, decide: does this fact's content appear somewhere in the care plan, in its own words or the plan's rewritten words -- it does not need to match verbatim? Answer for every single fact listed; do not skip any, and do not answer for a fact_id not listed.
+
+FACT LEDGER:
+{facts_block}
+
+CARE PLAN (JSON, 0-based array positions -- address items exactly by these positions):
+{care_plan_block}
+
+Return JSON only, matching this schema. No markdown, no commentary.
+{schema}
+
+JSON OUTPUT:

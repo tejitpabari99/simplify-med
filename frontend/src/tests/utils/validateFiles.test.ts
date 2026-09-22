@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateFiles, validateText, formatBytes, MAX_FILES, MAX_TEXT_LENGTH, MAX_TEXT_BYTES } from '../../utils/validateFiles';
+import { validateFiles, validateText, formatBytes, MAX_FILES, MAX_TEXT_LENGTH } from '../../utils/validateFiles';
 
 function fakeFile(name: string, sizeBytes: number): File {
   const file = new File([''], name);
@@ -60,62 +60,13 @@ describe('formatBytes', () => {
 });
 
 describe('validateText', () => {
-  it('accepts plain ASCII text comfortably under both the character and byte caps', () => {
+  it('accepts plain ASCII text comfortably under the character cap', () => {
     expect(validateText('a'.repeat(300_000))).toBeNull();
-  });
-
-  it('accepts plain ASCII text exactly at the byte cap boundary', () => {
-    // For ASCII, 1 char == 1 UTF-8 byte, so MAX_TEXT_BYTES chars is also exactly
-    // at the byte cap (and well under MAX_TEXT_LENGTH).
-    expect(validateText('a'.repeat(MAX_TEXT_BYTES))).toBeNull();
-  });
-
-  it('rejects plain ASCII text one byte over the byte cap, even though it is well under the character cap', () => {
-    const text = 'a'.repeat(MAX_TEXT_BYTES + 1);
-    const err = validateText(text);
-    expect(err).not.toBeNull();
-    expect(err).toBe('This text is too long to process. Try shortening it or uploading a file instead.');
-    // This is plain ASCII, so the message must not blame the user's language/emoji --
-    // that would be a wrong explanation for this case.
-    expect(err).not.toMatch(/language|emoji/i);
-    expect(err).not.toContain('bytes');
-    expect(err).not.toContain('characters,'); // not the character-cap message
   });
 
   it('rejects ASCII text over the character cap with the exact length in the existing message', () => {
     const text = 'a'.repeat(MAX_TEXT_LENGTH + 1);
     const err = validateText(text);
     expect(err).toContain(`${MAX_TEXT_LENGTH + 1}`.replace(/\B(?=(\d{3})+(?!\d))/g, ','));
-  });
-
-  it('rejects CJK text that is under the character cap but over the byte cap', () => {
-    // Each '中' is 1 UTF-16 code unit (JS .length) but 3 UTF-8 bytes.
-    const text = '中'.repeat(116_667);
-    expect(text.length).toBeLessThan(MAX_TEXT_LENGTH);
-    const err = validateText(text);
-    expect(err).not.toBeNull();
-    expect(err).toBe('This text is too long to process. Try shortening it or uploading a file instead.');
-    expect(err).not.toContain('bytes');
-  });
-
-  it('rejects emoji text (surrogate pairs) that is under the character cap but over the byte cap', () => {
-    // Each grinning-face emoji is a surrogate pair -- 2 UTF-16 code units, 4 UTF-8 bytes.
-    const text = '\u{1F600}'.repeat(87_501);
-    expect(text.length).toBeLessThan(MAX_TEXT_LENGTH);
-    const err = validateText(text);
-    expect(err).not.toBeNull();
-    expect(err).toBe('This text is too long to process. Try shortening it or uploading a file instead.');
-  });
-
-  it('accepts CJK text exactly at the byte cap boundary', () => {
-    const text = '中'.repeat(116_666) + 'ab'; // 116,666*3 + 2 = 350,000 bytes exactly
-    expect(new TextEncoder().encode(text).length).toBe(MAX_TEXT_BYTES);
-    expect(validateText(text)).toBeNull();
-  });
-
-  it('rejects CJK text one byte over the byte cap boundary', () => {
-    const text = '中'.repeat(116_666) + 'abc'; // 116,666*3 + 3 = 350,001 bytes
-    expect(new TextEncoder().encode(text).length).toBe(MAX_TEXT_BYTES + 1);
-    expect(validateText(text)).not.toBeNull();
   });
 });

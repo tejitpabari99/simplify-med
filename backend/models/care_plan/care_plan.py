@@ -24,7 +24,6 @@ class DiagnosisDetail(JsonModel):
 
 
 class Diagnosis(JsonModel):
-    main_conclusion: str = ""
     changed_since_last_visit: str = ""
     details: list[DiagnosisDetail] = Field(default_factory=list)
 
@@ -39,10 +38,9 @@ class Medication(JsonModel):
     duration: str = ""
     instructions: str = ""
     side_effects_to_watch: str = ""
-    importance: Constants.Enums.IMPORTANCE = Constants.Enums.IMPORTANCE.LOW
-    source: Constants.Enums.SOURCE | None = None
-    change: bool = False
-    change_description: str = ""
+    change: str = ""
+    status: Literal["to_do", "done"]
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class Test(JsonModel):
@@ -51,8 +49,8 @@ class Test(JsonModel):
     why: str = ""
     description: str = ""
     preparation: str = ""
-    importance: Constants.Enums.IMPORTANCE = Constants.Enums.IMPORTANCE.LOW
-    source: Constants.Enums.SOURCE | None = None
+    status: Literal["to_do", "done"]
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class Procedure(JsonModel):
@@ -61,8 +59,8 @@ class Procedure(JsonModel):
     why: str = ""
     what_to_expect: str = ""
     timeframe: str = ""
-    importance: Constants.Enums.IMPORTANCE = Constants.Enums.IMPORTANCE.LOW
-    source: Constants.Enums.SOURCE | None = None
+    status: Literal["to_do", "done"]
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class OtherInstruction(JsonModel):
@@ -72,23 +70,24 @@ class OtherInstruction(JsonModel):
     description: str = ""
     frequency: str = ""
     duration: str = ""
-    importance: Constants.Enums.IMPORTANCE = Constants.Enums.IMPORTANCE.LOW
-    source: Constants.Enums.SOURCE | None = None
+    status: Literal["to_do", "done"]
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class FollowUp(JsonModel):
     time_frame: str = ""
     description: str = ""
+    status: Literal["to_do", "done"]
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class WarningSign(JsonModel):
     symptom: str = ""
     what_it_might_mean: str = ""
     what_to_do: str = ""
-    urgency: Literal["emergency", "call_doctor", "monitor", "normal_side_effect"] = "monitor"
+    urgency: Literal["emergency", "call_doctor", "monitor", "normal_side_effect"] | None
     related_to: str = ""
-    importance: Constants.Enums.IMPORTANCE = Constants.Enums.IMPORTANCE.LOW
-    source: Constants.Enums.SOURCE | None = None
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class GlossaryTerm(JsonModel):
@@ -98,19 +97,13 @@ class GlossaryTerm(JsonModel):
     altText: str | None = None
 
 
-class RawArtifacts(JsonModel):
-    text: str
-    simplified_text: str
-    clarified_text: str
-
-
 class CarePlan(JsonModel):
     """The care-plan document produced by the pipeline."""
 
     doc_type: Literal["care_plan"] = "care_plan"
     version: Literal["1.2"] = Constants.Schema.CARE_PLAN_VERSION
-    urgency: Literal["normal", "caution", "concern", "urgent"] = "normal"
     summary: str = ""
+    summary_fact_ids: list[int] = Field(default_factory=list)
     reason_for_visit: list[ReasonForVisit] = Field(default_factory=list)
     diagnosis: Diagnosis = Field(default_factory=Diagnosis)
     medications: list[Medication] = Field(default_factory=list)
@@ -123,8 +116,6 @@ class CarePlan(JsonModel):
     low_priority: list[str] = Field(default_factory=list)
     note: str | None = None
     terms: dict[str, GlossaryTerm] = Field(default_factory=dict)
-    raw: RawArtifacts | None = None
-    additional_info: list[str] = Field(default_factory=list)
 
     @classmethod
     def from_pipeline_result(cls, data: dict) -> "CarePlan":

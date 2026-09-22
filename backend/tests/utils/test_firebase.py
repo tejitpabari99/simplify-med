@@ -149,12 +149,9 @@ def test_complete_job_raises_firestore_error(mock_client):
 
 
 @patch("utils.firebase.firestore_client")
-def test_complete_job_unconditionally_clears_top_level_input_text(mock_client):
-    """complete_job always deletes the top-level input_text field — this app
-    never keeps the raw document text around after a job reaches a terminal
-    state (see complete_job's own docstring)."""
+def test_complete_job_leaves_gcs_payload_uri_untouched(mock_client):
+    """Terminal writes leave the GCS-payload reference available for cleanup."""
     from utils.firebase import complete_job
-    from firebase_admin import firestore
 
     doc_ref = MagicMock()
     mock_client.return_value.collection.return_value.document.return_value = doc_ref
@@ -162,8 +159,28 @@ def test_complete_job_unconditionally_clears_top_level_input_text(mock_client):
     complete_job("j1", {"care_plan": {}}, "name")
 
     update_fields = doc_ref.update.call_args.args[0]
-    assert update_fields["input_text"] is firestore.DELETE_FIELD
+    assert "input_payload_gcs_uri" not in update_fields
     assert update_fields["status"] == "completed"
+
+
+@patch("utils.firebase.firestore_client")
+def test_complete_job_writes_terminal_stage_from_constants(mock_client):
+    """complete_job's terminal `stage` value must track
+    Constants.Pipeline.PIPELINE_STEPS.CORRECT.number, not a hardcoded
+    literal — regression guard for the exact bug pattern PRD
+    06-pipeline-orchestration §4.7 fixes (a magic number matching the old
+    final step, one short of the real final stage after renumbering)."""
+    from utils.firebase import complete_job
+    from utils.constants import Constants
+
+    doc_ref = MagicMock()
+    mock_client.return_value.collection.return_value.document.return_value = doc_ref
+
+    complete_job("j1", {"care_plan": {}}, "name")
+
+    update_fields = doc_ref.update.call_args.args[0]
+    assert update_fields["stage"] == Constants.Pipeline.PIPELINE_STEPS.CORRECT.number
+    assert update_fields["stage"] == 6
 
 
 @patch("utils.firebase.firestore_client")
@@ -175,11 +192,9 @@ def test_fail_job_raises_firestore_error(mock_client):
 
 
 @patch("utils.firebase.firestore_client")
-def test_fail_job_unconditionally_clears_top_level_input_text(mock_client):
-    """fail_job always deletes the top-level input_text field too — the raw
-    text is no longer needed once a job reaches ANY terminal state."""
+def test_fail_job_leaves_gcs_payload_uri_untouched(mock_client):
+    """Terminal error writes leave the GCS-payload reference for cleanup."""
     from utils.firebase import fail_job
-    from firebase_admin import firestore
 
     doc_ref = MagicMock()
     mock_client.return_value.collection.return_value.document.return_value = doc_ref
@@ -187,7 +202,7 @@ def test_fail_job_unconditionally_clears_top_level_input_text(mock_client):
     fail_job("j1", {"code": "EMPTY_DOCUMENT"})
 
     update_fields = doc_ref.update.call_args.args[0]
-    assert update_fields["input_text"] is firestore.DELETE_FIELD
+    assert "input_payload_gcs_uri" not in update_fields
     assert update_fields["status"] == "error"
 
 

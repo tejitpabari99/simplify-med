@@ -23,8 +23,6 @@ def _make_run_result(text="plain note"):
     return PipelineRunResult(
         care_plan=MagicMock(),
         term_data={"substitution_candidates": [], "preserve_and_define_terms": [], "abbreviations": []},
-        simplified="simplified",
-        clarified="clarified",
         raw_text=text,
     )
 
@@ -32,17 +30,19 @@ def _make_run_result(text="plain note"):
 class FakePipeline:
     """Fake pipeline that yields typed events from iter_steps without calling wrap_step."""
 
-    def iter_steps(self, text, wrap_step=None):
+    def iter_steps(self, text, units, wrap_step=None):
         for step in (2, 3, 4, 5):
             yield StepEvent(step=step, status="active", label=f"Step {step}")
             yield StepEvent(step=step, status="done", label=f"Step {step}")
+        yield StepEvent(step=6, status="active", label="Correct")
+        yield StepEvent(step=6, status="done", label="Correct")
         yield _make_run_result(text)
 
 
 class FailingPipeline:
     """Fake pipeline that yields a step error."""
 
-    def iter_steps(self, text, wrap_step=None):
+    def iter_steps(self, text, units, wrap_step=None):
         yield PipelineStepError(step=3, exc=RuntimeError("fail"))
 
 
@@ -60,14 +60,15 @@ def test_run_care_plan_pipeline_yields_typed_step_events():
          patch("services.care_plan_pipeline.Markers") as mock_markers:
         mock_markers.CarePlan.Pipeline.execute.side_effect = lambda fn: fn(mock_scope)
 
-        events = list(run_care_plan_pipeline("plain note", metrics, grading_enabled=False))
+        events = list(run_care_plan_pipeline("plain note", [], metrics, grading_enabled=False))
 
     step_events = [e for e in events if isinstance(e, AdapterStepEvent)]
-    assert [(e.step, e.status) for e in step_events] == [
-        (2, "active"), (2, "done"),
-        (3, "active"), (3, "done"),
-        (4, "active"), (4, "done"),
-        (5, "active"), (5, "done"),
+    assert [(e.step, e.status, e.label) for e in step_events] == [
+        (2, "active", "Step 2"), (2, "done", "Step 2"),
+        (3, "active", "Step 3"), (3, "done", "Step 3"),
+        (4, "active", "Step 4"), (4, "done", "Step 4"),
+        (5, "active", "Step 5"), (5, "done", "Step 5"),
+        (6, "active", "Correct"), (6, "done", "Correct"),
     ]
 
 
@@ -79,7 +80,7 @@ def test_run_care_plan_pipeline_yields_adapter_result():
          patch("services.care_plan_pipeline.Markers") as mock_markers:
         mock_markers.CarePlan.Pipeline.execute.side_effect = lambda fn: fn(mock_scope)
 
-        events = list(run_care_plan_pipeline("plain note", metrics, grading_enabled=False))
+        events = list(run_care_plan_pipeline("plain note", [], metrics, grading_enabled=False))
 
     result_events = [e for e in events if isinstance(e, AdapterResult)]
     assert len(result_events) == 1
@@ -98,7 +99,7 @@ def test_run_care_plan_pipeline_step_error_yields_adapter_error():
          patch("services.care_plan_pipeline.Markers") as mock_markers:
         mock_markers.CarePlan.Pipeline.execute.side_effect = lambda fn: fn(mock_scope)
 
-        events = list(run_care_plan_pipeline("text", metrics, grading_enabled=False))
+        events = list(run_care_plan_pipeline("text", [], metrics, grading_enabled=False))
 
     error_events = [e for e in events if isinstance(e, AdapterError)]
     assert len(error_events) == 1
@@ -119,18 +120,20 @@ def test_grading_enabled_still_computes_before_and_after_scores():
     with patch("services.care_plan_pipeline.CarePlanPipeline", return_value=FakePipeline()), \
          patch("services.care_plan_pipeline.Markers") as mock_markers, \
          patch("services.care_plan_pipeline.score_text_safe") as mock_score, \
+         patch("services.care_plan_pipeline.render_care_plan_text") as mock_render, \
          patch("services.care_plan_pipeline.build_grading_with_before_after_score") as mock_build:
         mock_markers.CarePlan.Pipeline.execute.side_effect = lambda fn: fn(mock_scope)
         mock_markers.Grading.Run.execute.side_effect = lambda fn: fn(mock_scope)
         mock_score.side_effect = lambda text, label: {"composite": 50.0, "dimensions": {}}
+        mock_render.return_value = "rendered text stub"
         mock_build.return_value = MagicMock(entries=[])
 
-        list(run_care_plan_pipeline("plain note", metrics, grading_enabled=True))
+        list(run_care_plan_pipeline("plain note", [], metrics, grading_enabled=True))
 
     assert mock_score.call_count == 2
     called_args = {c.args for c in mock_score.call_args_list}
     assert ("plain note", "before") in called_args
-    assert ("clarified", "after") in called_args
+    assert ("rendered text stub", "after") in called_args
 
 
 def test_grading_disabled_never_creates_a_threadpool():
@@ -142,7 +145,7 @@ def test_grading_disabled_never_creates_a_threadpool():
          patch("services.care_plan_pipeline.ThreadPoolExecutor") as mock_pool:
         mock_markers.CarePlan.Pipeline.execute.side_effect = lambda fn: fn(mock_scope)
 
-        list(run_care_plan_pipeline("plain note", metrics, grading_enabled=False))
+        list(run_care_plan_pipeline("plain note", [], metrics, grading_enabled=False))
 
     mock_pool.assert_not_called()
 
@@ -155,7 +158,7 @@ def test_step_error_with_grading_enabled_does_not_hang_or_leak_thread():
          patch("services.care_plan_pipeline.Markers") as mock_markers:
         mock_markers.CarePlan.Pipeline.execute.side_effect = lambda fn: fn(mock_scope)
 
-        events = list(run_care_plan_pipeline("text", metrics, grading_enabled=True))
+        events = list(run_care_plan_pipeline("text", [], metrics, grading_enabled=True))
 
     error_events = [e for e in events if isinstance(e, AdapterError)]
     assert len(error_events) == 1
@@ -165,7 +168,7 @@ def test_pipeline_constructor_failure_with_grading_enabled_does_not_hang_or_leak
     metrics = _make_metrics()
 
     with patch("services.care_plan_pipeline.CarePlanPipeline", side_effect=RuntimeError("boom")):
-        events = list(run_care_plan_pipeline("text", metrics, grading_enabled=True))
+        events = list(run_care_plan_pipeline("text", [], metrics, grading_enabled=True))
 
     error_events = [e for e in events if isinstance(e, AdapterError)]
     assert len(error_events) == 1
@@ -184,7 +187,7 @@ def test_before_score_submitted_before_pipeline_construction():
         def __init__(self):
             order.append("pipeline_constructed")
 
-        def iter_steps(self, text, wrap_step=None):
+        def iter_steps(self, text, units, wrap_step=None):
             order.append("pipeline_iter_start")
             yield _make_run_result(text)
 
@@ -202,16 +205,18 @@ def test_before_score_submitted_before_pipeline_construction():
          patch("services.care_plan_pipeline.CarePlanPipeline", side_effect=OrderTrackingPipeline), \
          patch("services.care_plan_pipeline.Markers") as mock_markers, \
          patch("services.care_plan_pipeline.score_text_safe") as mock_score, \
+         patch("services.care_plan_pipeline.render_care_plan_text") as mock_render, \
          patch("services.care_plan_pipeline.build_grading_with_before_after_score") as mock_build:
         mock_markers.CarePlan.Pipeline.execute.side_effect = lambda fn: fn(mock_scope)
         mock_markers.Grading.Run.execute.side_effect = lambda fn: fn(mock_scope)
+        mock_render.return_value = "rendered text stub"
         mock_build.return_value = MagicMock(entries=[])
 
-        list(run_care_plan_pipeline("plain note", metrics, grading_enabled=True))
+        list(run_care_plan_pipeline("plain note", [], metrics, grading_enabled=True))
 
     assert order.index("submit_before_score") < order.index("pipeline_constructed")
     assert order.index("submit_before_score") < order.index("pipeline_iter_start")
     mock_executor.shutdown.assert_called_once_with(wait=True)
     # after-score is still computed synchronously via a direct call, not via the
     # executor — only "before" is offloaded to the background thread.
-    mock_score.assert_called_once_with("clarified", "after")
+    mock_score.assert_called_once_with("rendered text stub", "after")

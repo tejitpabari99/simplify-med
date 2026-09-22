@@ -56,13 +56,14 @@ def test_source_kind_param_in_pipeline():
 
 def _make_pipeline_stub():
     """Return a minimal CarePlanPipeline stub with iter_steps support."""
+    from models.care_plan import CarePlan
     from models.pipeline_events import PipelineRunResult, StepEvent
 
     stub = MagicMock()
-    care_plan_mock = MagicMock()
+    care_plan_mock = CarePlan(summary="A plain-language care-plan summary.")
 
-    def fake_iter_steps(text, wrap_step=None):
-        for step in (2, 3, 4, 5):
+    def fake_iter_steps(text, units, wrap_step=None):
+        for step in (2, 3, 4, 5, 6):
             yield StepEvent(step=step, status="active", label=f"Step {step}")
             if wrap_step is not None:
                 # Call wrap_step so Markers get triggered for each step
@@ -79,8 +80,6 @@ def _make_pipeline_stub():
                 "preserve_and_define_terms": [],
                 "abbreviations": [],
             },
-            simplified="simplified text",
-            clarified="clarified text",
             raw_text=text,
         )
 
@@ -133,6 +132,7 @@ def test_pipeline_marker_has_source_kind_and_grading_enabled(_clean_sink):
     ):
         _exhaust(run_care_plan_pipeline(
             "some medical text",
+            [],
             metrics,
             grading_enabled=True,
             source_kind="upload",
@@ -140,6 +140,14 @@ def test_pipeline_marker_has_source_kind_and_grading_enabled(_clean_sink):
 
     pipeline_events = [e for e in sink.events if e["name"] == "care_plan.pipeline"]
     assert pipeline_events, "No care_plan.pipeline event found"
+    emitted_names = {event["name"] for event in sink.events}
+    assert {
+        "care_plan.find_medical_terms",
+        "care_plan.ground",
+        "care_plan.assemble_and_render",
+        "care_plan.review",
+        "care_plan.correct",
+    } <= emitted_names
     dims = pipeline_events[0]["dimensions"]
     assert dims.get("source_kind") == "upload", f"Expected source_kind='upload', got {dims.get('source_kind')!r}"
     assert dims.get("grading_enabled") is True, f"Expected grading_enabled=True, got {dims.get('grading_enabled')!r}"
@@ -164,6 +172,7 @@ def test_pipeline_marker_dimensions_for_text_source(_clean_sink):
     ):
         _exhaust(run_care_plan_pipeline(
             "pasted medical text",
+            [],
             metrics,
             grading_enabled=False,
             source_kind="text",
@@ -224,6 +233,7 @@ def test_grading_run_marker_fired_when_grading_enabled(_clean_sink):
     ):
         _exhaust(run_care_plan_pipeline(
             "text for grading",
+            [],
             metrics,
             grading_enabled=True,
             source_kind="upload",
@@ -258,6 +268,7 @@ def test_grading_run_marker_not_fired_when_grading_disabled(_clean_sink):
     ):
         _exhaust(run_care_plan_pipeline(
             "text without grading",
+            [],
             metrics,
             grading_enabled=False,
             source_kind="upload",
@@ -266,5 +277,3 @@ def test_grading_run_marker_not_fired_when_grading_disabled(_clean_sink):
     grading_events = [e for e in sink.events if e["name"] == "grading.run"]
     assert not grading_events, \
         f"grading.run marker fired unexpectedly when grading_enabled=False: {grading_events}"
-
-

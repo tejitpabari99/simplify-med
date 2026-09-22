@@ -19,7 +19,7 @@ def now():
 def input_fields():
     return {
         "input_source_kind": "text",
-        "input_text": "hello",
+        "input_payload_gcs_uri": "gs://test-bucket/care_plan_inputs/u2/inputs/test.json",
         "input_source_filename": "note.txt",
         "input_pdf_gcs_uri": None,
         "input_version": "v1-2",
@@ -27,9 +27,8 @@ def input_fields():
     }
 
 
-def test_for_single_sets_shared_trace(now, input_fields):
+def test_for_single_sets_trace(now, input_fields):
     job = JobDoc.for_single(user_id="u2", now=now, trace_id="abc123", input_fields=input_fields)
-    assert job.shared is False
     assert job.trace_id == "abc123"
     assert job.status == StatusEnum.not_started
 
@@ -70,7 +69,7 @@ def test_from_firestore_roundtrip(now, input_fields):
     d = job.to_firestore()
     job2 = JobDoc.from_firestore(d)
     assert job2.uid == job.uid
-    assert job2.input_text == job.input_text
+    assert job2.input_payload_gcs_uri == job.input_payload_gcs_uri
     assert job2.created_at == job.created_at
 
 

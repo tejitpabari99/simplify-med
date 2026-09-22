@@ -377,6 +377,22 @@ body {
   font-size: 0.9rem;
 }
 
+.next-step-checkbox {
+  flex-shrink: 0;
+  font-family: inherit; /* Unicode box-drawing glyphs render fine in the app's system font stack */
+}
+
+.next-step-type-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 /* ============================================================
    Error state
    ============================================================ */

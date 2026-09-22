@@ -12,14 +12,17 @@ class Markers:
         @code_marker("care_plan.find_medical_terms")
         class FindMedicalTerms(CodeMarker): pass
 
-        @code_marker("care_plan.simplify_language")
-        class SimplifyLanguage(CodeMarker): pass
+        @code_marker("care_plan.ground")
+        class Ground(CodeMarker): pass
 
-        @code_marker("care_plan.clarify_actions")
-        class ClarifyActions(CodeMarker): pass
+        @code_marker("care_plan.assemble_and_render")
+        class AssembleAndRender(CodeMarker): pass
 
-        @code_marker("care_plan.structure_note")
-        class StructureNote(CodeMarker): pass
+        @code_marker("care_plan.review")
+        class Review(CodeMarker): pass
+
+        @code_marker("care_plan.correct")
+        class Correct(CodeMarker): pass
 
         @code_marker("care_plan.save_output")
         class SaveOutput(CodeMarker): pass

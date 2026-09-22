@@ -28,7 +28,7 @@ def test_text_input_exact_shape():
     }
 
 
-def test_text_input_text_defaults_to_none():
+def test_text_value_defaults_to_none():
     assert TextInput().to_dict() == {"mode": "text", "text": None}
 
 

@@ -44,15 +44,17 @@ class JobDoc(JsonModel):
     error_data: Optional[ErrorDetail] = None
 
     # ── Input provenance ──────────────────────────────────────────────────
+    # The raw document and provenance map live in the GCS object referenced
+    # by input_payload_gcs_uri. Firestore holds only what the frontend renders
+    # or what routing and cleanup need.
     input_source_kind: SourceKind
-    input_text: Optional[str] = None
     input_source_filename: str
     input_pdf_gcs_uri: Optional[str] = None
+    input_payload_gcs_uri: Optional[str] = None
     input_version: str = "v1-2"
     grading_enabled: bool = False
 
     # ── Single-job-only extras ────────────────────────────────────────────
-    shared: Optional[bool] = None
     trace_id: Optional[str] = None
 
     # ── Expiry ────────────────────────────────────────────────────────────
@@ -81,7 +83,7 @@ class JobDoc(JsonModel):
         """Build a job doc for a care-plan job.
 
         input_fields dict must contain:
-          input_source_kind, input_text, input_source_filename,
+          input_source_kind, input_payload_gcs_uri, input_source_filename,
           input_pdf_gcs_uri, input_version, grading_enabled
         """
         return cls(
@@ -91,7 +93,6 @@ class JobDoc(JsonModel):
             created_at=now,
             updated_at=now,
             status=StatusEnum.not_started,
-            shared=False,
             trace_id=trace_id,
             expires_at=expires_at,
             **input_fields,

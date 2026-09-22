@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field
 
 from .base import JsonModel
+from .provenance import SourceSpan
 from utils.constants import Constants
 
 
@@ -46,3 +47,4 @@ class ResolvedInput(JsonModel):
     # services.care_plan_input.resolve_uploaded_files's
     # tolerate_unusable_files param).
     skipped_files: list[str] = Field(default_factory=list)
+    provenance: list[SourceSpan] = Field(default_factory=list)   # NEW

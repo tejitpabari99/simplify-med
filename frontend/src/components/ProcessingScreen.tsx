@@ -25,13 +25,14 @@ const WATCHDOG_TIMEOUT_MS = 6 * 60 * 1000;
 const PIPELINE_STEPS: Omit<PipelineStep, 'status'>[] = [
   { id: 1, label: 'Reading your note', description: 'Extracting text from your input' },
   { id: 2, label: 'Finding difficult and medical terms', description: 'Matching terms from AHRQ and medical dictionary' },
-  { id: 3, label: 'Simplifying language', description: 'Rewriting to a 6th-grade reading level' },
-  { id: 4, label: 'Clarifying actions and numbers', description: 'Active voice, plain action verbs, clear instructions' },
-  { id: 5, label: 'Organizing your care plan', description: 'Structuring into sections that are easy to follow' },
+  { id: 3, label: 'Finding the facts in your note', description: 'Pulling out what your note actually says' },
+  { id: 4, label: 'Putting your care plan together', description: 'Organizing everything into plain language' },
+  { id: 5, label: 'Double-checking your care plan', description: 'Comparing it against your note for accuracy' },
+  { id: 6, label: 'Finishing touches', description: 'Making final corrections and adding glossary terms' },
 ];
 
 const STEP_KEYS: Record<number, string> = {
-  1: 'read_note', 2: 'find_terms', 3: 'simplify', 4: 'clarify', 5: 'organize',
+  1: 'read_note', 2: 'find_terms', 3: 'ground', 4: 'assemble_render', 5: 'review', 6: 'correct',
 };
 
 function stepsFromStage(stage: number | null): PipelineStep[] {

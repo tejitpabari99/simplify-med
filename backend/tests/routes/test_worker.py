@@ -2,7 +2,7 @@
 import copy
 from datetime import datetime, timedelta, timezone
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from flask import Flask
 from models.pipeline_events import AdapterStepEvent, AdapterResult, AdapterError
 from models.grading import build_grading_with_before_after_score
@@ -19,6 +19,12 @@ def _disable_oidc_verification(monkeypatch):
     target the auth gate re-enable it explicitly via monkeypatch.
     """
     monkeypatch.setenv("WORKER_VERIFY_OIDC", "false")
+    # Pipeline-call tests use minimal JobDoc stubs. Keep their input transport
+    # controlled at the worker boundary rather than reintroducing text or
+    # provenance fields on those Firestore-shaped docs.
+    monkeypatch.setattr(
+        "routes.worker.load_job_input", lambda job: ("Patient has hypertension.", [])
+    )
 
 
 @pytest.fixture
@@ -45,7 +51,6 @@ def _make_job_doc(status="not_started", stage=None, batch_group_id=None, source_
         "stage": stage,
         "batch_group_id": batch_group_id,
         "input_source_kind": source_kind,
-        "input_text": "Patient has hypertension.",
         "input_doc_id": None,
         "input_version": "v1-2",
         "grading_enabled": False,
@@ -79,14 +84,13 @@ def test_happy_path_completes_job(
     care_plan_mock.to_dict.return_value = {"reason_for_visit": [{"reason": "Hypertension"}]}
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
         yield AdapterStepEvent(step=2, status="active", label="Terms")
         yield AdapterStepEvent(step=2, status="done", label="Terms")
         yield AdapterResult(
             care_plan=care_plan_mock,
             grading=grading_mock,
             raw_text=text,
-            clarified_text="clarified",
         )
 
     envelope_mock = MagicMock()
@@ -121,7 +125,7 @@ def test_pipeline_error_fails_job(
     mock_db = MagicMock()
     mock_fs_client.return_value = mock_db
 
-    def fake_pipeline_error(text, metrics, grading_enabled, source_kind="text", is_batch=False):
+    def fake_pipeline_error(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
         yield AdapterError(error_data={
             "code": "PIPELINE_ERROR",
             "message": "Pipeline error",
@@ -146,6 +150,39 @@ def test_pipeline_error_fails_job(
 
 
 @patch("utils.firebase.firestore.client")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
+def test_execute_job_fails_cleanly_with_pipeline_error_when_input_payload_missing(
+    mock_get_doc, mock_fail, mock_fs_client, client_worker, monkeypatch
+):
+    """A missing input payload is terminal for this task, not a 500/retry."""
+    from errors import ErrorCode, SimplifyError
+
+    doc = _make_job_doc()
+    mock_get_doc.return_value = doc
+    mock_fs_client.return_value = MagicMock()
+
+    def fail_with_payload_missing(job_id, error_data):
+        doc["status"] = "error"
+        doc["error_data"] = error_data
+
+    mock_fail.side_effect = fail_with_payload_missing
+
+    def load_missing_payload(job):
+        raise SimplifyError(ErrorCode.PIPELINE_ERROR, "input payload missing")
+
+    monkeypatch.setattr("routes.worker.load_job_input", load_missing_payload)
+
+    worker_resp = client_worker.post(
+        "/internal/jobs/execute/job-1", headers=QUEUE_HEADER, content_type="application/json"
+    )
+
+    assert worker_resp.status_code == 200
+    assert doc["status"] == "error"
+    assert doc["error_data"]["code"] == "PIPELINE_ERROR"
+
+
+@patch("utils.firebase.firestore.client")
 @patch("routes.worker.complete_job")
 @patch("routes.worker.update_job_stage")
 @patch("routes.worker.fail_job")
@@ -158,7 +195,7 @@ def test_timeout_fails_job_with_job_timeout_code(
     mock_db = MagicMock()
     mock_fs_client.return_value = mock_db
 
-    def fake_pipeline_slow(text, metrics, grading_enabled, source_kind="text", is_batch=False):
+    def fake_pipeline_slow(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
         # Emit a stage transition so _check_timeout runs.
         yield AdapterStepEvent(step=2, status="active", label="Terms")
 
@@ -317,6 +354,16 @@ def _make_job_doc_with_pdf_upload(status="not_started", input_pdf_gcs_uri="gs://
     return doc
 
 
+def _make_job_doc_with_gcs_uploads(
+    status="not_started",
+    input_pdf_gcs_uri="gs://b/p.pdf",
+    input_payload_gcs_uri="gs://b/payload.json",
+):
+    doc = _make_job_doc_with_pdf_upload(status, input_pdf_gcs_uri)
+    doc["input_payload_gcs_uri"] = input_payload_gcs_uri
+    return doc
+
+
 @patch("routes.worker.delete_gcs_object")
 @patch("utils.firebase.firestore.client")
 @patch("routes.worker.complete_job")
@@ -334,8 +381,8 @@ def test_job_success_triggers_gcs_cleanup(
     care_plan_mock.to_dict.return_value = {"reason_for_visit": [{"reason": "Hypertension"}]}
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {"care_plan": {}, "metrics": {"saved_id": None}}
@@ -356,6 +403,61 @@ def test_job_success_triggers_gcs_cleanup(
 @patch("routes.worker.update_job_stage")
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
+def test_execute_job_finally_block_deletes_both_gcs_objects_on_success(
+    mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
+    mock_delete_gcs, client_worker,
+):
+    mock_get_doc.return_value = _make_job_doc_with_gcs_uploads()
+    mock_fs_client.return_value = MagicMock()
+
+    care_plan_mock = MagicMock()
+    grading_mock = MagicMock()
+
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
+
+    envelope_mock = MagicMock()
+    envelope_mock.to_dict.return_value = {"care_plan": {}, "metrics": {"saved_id": None}}
+
+    with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+        with patch("routes.worker.CarePlanInternal", return_value=envelope_mock):
+            resp = client_worker.post("/internal/jobs/execute/job-1", headers=QUEUE_HEADER)
+
+    assert resp.status_code == 200
+    mock_delete_gcs.assert_has_calls([call("gs://b/p.pdf"), call("gs://b/payload.json")])
+    assert mock_delete_gcs.call_count == 2
+
+
+@patch("routes.worker.delete_gcs_object")
+@patch("utils.firebase.firestore.client")
+@patch("routes.worker.complete_job")
+@patch("routes.worker.update_job_stage")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
+def test_execute_job_finally_block_deletes_both_gcs_objects_on_failure(
+    mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
+    mock_delete_gcs, client_worker,
+):
+    mock_get_doc.return_value = _make_job_doc_with_gcs_uploads()
+    mock_fs_client.return_value = MagicMock()
+
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        raise RuntimeError("boom")
+
+    with patch("routes.worker.run_care_plan_pipeline", fake_pipeline):
+        resp = client_worker.post("/internal/jobs/execute/job-1", headers=QUEUE_HEADER)
+
+    assert resp.status_code == 500
+    mock_delete_gcs.assert_has_calls([call("gs://b/p.pdf"), call("gs://b/payload.json")])
+    assert mock_delete_gcs.call_count == 2
+
+
+@patch("routes.worker.delete_gcs_object")
+@patch("utils.firebase.firestore.client")
+@patch("routes.worker.complete_job")
+@patch("routes.worker.update_job_stage")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
 def test_job_pipeline_failure_still_triggers_gcs_cleanup(
     mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
     mock_delete_gcs, client_worker,
@@ -363,7 +465,7 @@ def test_job_pipeline_failure_still_triggers_gcs_cleanup(
     mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
     mock_fs_client.return_value = MagicMock()
 
-    def fake_pipeline_error(text, metrics, grading_enabled, source_kind="text", is_batch=False):
+    def fake_pipeline_error(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
         yield AdapterError(error_data={"code": "PIPELINE_ERROR", "message": "boom"})
 
     with patch("routes.worker.run_care_plan_pipeline", lambda *a, **kw: fake_pipeline_error(*a, **kw)):
@@ -390,8 +492,8 @@ def test_job_without_pdf_upload_never_triggers_gcs_cleanup(
     care_plan_mock.to_dict.return_value = {}
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {"care_plan": {}, "metrics": {"saved_id": None}}
@@ -412,7 +514,7 @@ def test_job_without_pdf_upload_never_triggers_gcs_cleanup(
 _RAW_TEXT_FIXTURE = {
     "text": "full document text " * 50,
     "simplified_text": "simplified document text " * 50,
-    "clarified_text": "clarified document text " * 50,
+    "post_processed_text": "post-processed document text " * 50,
 }
 
 
@@ -426,9 +528,7 @@ def test_job_completed_output_has_no_raw(
     mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
     mock_delete_gcs, client_worker,
 ):
-    """Jobs must not persist care_plan.raw (text/simplified_text/
-    clarified_text each hold a full copy of the document) in the completed
-    job's output_data."""
+    """Jobs must not persist care_plan.raw's full-document copies in output_data."""
     mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
     mock_fs_client.return_value = MagicMock()
 
@@ -439,8 +539,8 @@ def test_job_completed_output_has_no_raw(
     }
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {
@@ -461,6 +561,122 @@ def test_job_completed_output_has_no_raw(
     mock_complete.assert_called_once()
     saved_output_data = mock_complete.call_args.args[1]
     assert "raw" not in saved_output_data["care_plan"]
+
+
+# ---------------------------------------------------------------------------
+# Jobs drop internal fact-ID provenance from the completed output
+# ---------------------------------------------------------------------------
+
+@patch("routes.worker.delete_gcs_object")
+@patch("utils.firebase.firestore.client")
+@patch("routes.worker.complete_job")
+@patch("routes.worker.update_job_stage")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
+def test_job_completed_output_has_no_summary_fact_ids(
+    mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
+    mock_delete_gcs, client_worker,
+):
+    mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
+    mock_fs_client.return_value = MagicMock()
+
+    care_plan_mock = MagicMock()
+    grading_mock = MagicMock()
+
+    pipeline_events = lambda text, units, metrics, grading_enabled, source_kind="text", is_batch=False: iter([
+        AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
+    ])
+
+    envelope_mock = MagicMock()
+    envelope_mock.to_dict.return_value = {
+        "care_plan": {
+            "reason_for_visit": [{"reason": "Hypertension"}],
+            "summary_fact_ids": [1, 2, 3],
+        },
+        "metrics": {"saved_id": None},
+    }
+
+    with patch("routes.worker.run_care_plan_pipeline", pipeline_events):
+        with patch("routes.worker.CarePlanInternal", return_value=envelope_mock):
+            resp = client_worker.post(
+                "/internal/jobs/execute/job-1", headers=QUEUE_HEADER, content_type="application/json",
+            )
+
+    assert resp.status_code == 200
+    mock_complete.assert_called_once()
+    saved_output_data = mock_complete.call_args.args[1]
+    assert "summary_fact_ids" not in saved_output_data["care_plan"]
+
+
+@patch("routes.worker.delete_gcs_object")
+@patch("utils.firebase.firestore.client")
+@patch("routes.worker.complete_job")
+@patch("routes.worker.update_job_stage")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
+def test_job_completed_output_has_no_source_fact_ids(
+    mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
+    mock_delete_gcs, client_worker,
+):
+    mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
+    mock_fs_client.return_value = MagicMock()
+
+    care_plan_mock = MagicMock()
+    grading_mock = MagicMock()
+
+    pipeline_events = lambda text, units, metrics, grading_enabled, source_kind="text", is_batch=False: iter([
+        AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
+    ])
+
+    envelope_mock = MagicMock()
+    envelope_mock.to_dict.return_value = {
+        "care_plan": {
+            "reason_for_visit": [{"reason": "Hypertension"}],
+            "medications": [{"title": "Metoprolol", "source_fact_ids": [4]}],
+            "tests": [{"title": "CBC", "source_fact_ids": [5]}],
+        },
+        "metrics": {"saved_id": None},
+    }
+
+    with patch("routes.worker.run_care_plan_pipeline", pipeline_events):
+        with patch("routes.worker.CarePlanInternal", return_value=envelope_mock):
+            resp = client_worker.post(
+                "/internal/jobs/execute/job-1", headers=QUEUE_HEADER, content_type="application/json",
+            )
+
+    assert resp.status_code == 200
+    mock_complete.assert_called_once()
+    saved_output_data = mock_complete.call_args.args[1]
+    assert "source_fact_ids" not in saved_output_data["care_plan"]["medications"][0]
+    assert "source_fact_ids" not in saved_output_data["care_plan"]["tests"][0]
+
+
+def test_strip_internal_provenance_removes_summary_and_all_six_source_fact_ids():
+    from routes.worker import _strip_internal_provenance
+
+    care_plan = {
+        "summary_fact_ids": [1, 2],
+        "medications": [{"title": "m", "source_fact_ids": [1]}],
+        "tests": [{"title": "t", "source_fact_ids": [2]}],
+        "procedures": [{"title": "p", "source_fact_ids": [3]}],
+        "other": [{"title": "o", "source_fact_ids": [4]}],
+        "follow_up": [{"title": "f", "source_fact_ids": [5]}],
+        "warning_signs": [{"title": "w", "source_fact_ids": [6]}],
+    }
+
+    _strip_internal_provenance(care_plan)
+
+    assert "summary_fact_ids" not in care_plan
+    for key in ("medications", "tests", "procedures", "other", "follow_up", "warning_signs"):
+        assert "source_fact_ids" not in care_plan[key][0]
+        assert "title" in care_plan[key][0]
+
+
+def test_strip_internal_provenance_tolerates_missing_keys():
+    from routes.worker import _strip_internal_provenance
+
+    _strip_internal_provenance({})
+    _strip_internal_provenance({"medications": [{"title": "m"}]})
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +702,7 @@ _REAL_GRADING_DICT = build_grading_with_before_after_score(
 @patch("routes.worker.update_job_stage")
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
-def test_job_completed_output_strips_input_text(
+def test_job_completed_output_strips_full_document_copy(
     mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
     mock_delete_gcs, client_worker,
 ):
@@ -502,8 +718,8 @@ def test_job_completed_output_strips_input_text(
     }
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {
@@ -565,8 +781,8 @@ def test_job_grading_trimmed_to_combined_after_input_and_raw_stripping(
     }
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {
@@ -631,8 +847,8 @@ def _job_completes_with_grading(grading_value, has_grading_key, client_worker, m
     care_plan_mock.to_dict.return_value = {"reason_for_visit": [{"reason": "Hypertension"}]}
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     to_dict_value = {
         "input": {"mode": "text", "text": "some text"},
@@ -780,8 +996,8 @@ def test_completed_job_populates_total_duration_ms(
     care_plan_mock.to_dict.return_value = {}
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {"care_plan": {}, "metrics": {"saved_id": None}}
@@ -820,8 +1036,8 @@ def test_job_with_pdf_upload_also_populates_total_duration_ms(
     care_plan_mock.to_dict.return_value = {}
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {"care_plan": {}, "metrics": {"saved_id": None}}
@@ -853,7 +1069,7 @@ def test_processing_job_within_lease_window_skips_redelivery(
     """A redelivered task for a job that's still within its own timeout
     budget must be a no-op (no pipeline re-run, no Firestore writes) --
     otherwise Cloud Tasks' at-least-once redelivery re-runs the whole
-    5-stage LLM pipeline a second time (double billing)."""
+    the whole pipeline (four sequential LLM calls) a second time (double billing)."""
     doc = _make_job_doc(status="processing")
     doc["started_at"] = datetime.now(timezone.utc) - timedelta(seconds=5)
     mock_get_doc.return_value = doc
@@ -891,8 +1107,8 @@ def test_processing_job_past_lease_window_is_retried_to_completion(
     care_plan_mock.to_dict.return_value = {"reason_for_visit": [{"reason": "Hypertension"}]}
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {"care_plan": {}, "metrics": {"saved_id": None}}
@@ -926,8 +1142,8 @@ def test_processing_job_with_no_started_at_is_retried(
     care_plan_mock.to_dict.return_value = {}
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {"care_plan": {}, "metrics": {"saved_id": None}}
@@ -951,15 +1167,14 @@ def test_processing_job_with_no_started_at_is_retried(
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
 def test_worker_rejects_text_below_min_meaningful_content_as_empty_document(
-    mock_get_doc, mock_fail, mock_complete, mock_fs_client, client_worker
+    mock_get_doc, mock_fail, mock_complete, mock_fs_client, client_worker, monkeypatch
 ):
-    """Belt-and-suspenders alongside the resolve_uploaded_files-level check:
-    even if some other path put near-nothing into job.input_text, the worker
-    itself must never let it reach the LLM pipeline."""
+    """The worker must never let near-empty loaded input reach the LLM
+    pipeline, even if an upstream transport check was bypassed."""
     doc = _make_job_doc()
-    doc["input_text"] = "short"  # < MIN_MEANINGFUL_CONTENT_CHARS (20)
     mock_get_doc.return_value = doc
     mock_fs_client.return_value = MagicMock()
+    monkeypatch.setattr("routes.worker.load_job_input", lambda job: ("short", []))
 
     resp = client_worker.post("/internal/jobs/execute/job-1", headers=QUEUE_HEADER)
 
@@ -971,7 +1186,7 @@ def test_worker_rejects_text_below_min_meaningful_content_as_empty_document(
 
 
 # ---------------------------------------------------------------------------
-# Top-level input_text cleared on terminal state (Finding 4)
+# Terminal-state behavior for loaded job input
 # ---------------------------------------------------------------------------
 
 @patch("utils.firebase.firestore.client")
@@ -979,7 +1194,7 @@ def test_worker_rejects_text_below_min_meaningful_content_as_empty_document(
 @patch("routes.worker.update_job_stage")
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
-def test_job_completion_clears_top_level_input_text(
+def test_job_completion_with_loaded_input(
     mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client, client_worker
 ):
     mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
@@ -989,8 +1204,8 @@ def test_job_completion_clears_top_level_input_text(
     care_plan_mock.to_dict.return_value = {}
     grading_mock = MagicMock()
 
-    def fake_pipeline(text, metrics, grading_enabled, source_kind="text", is_batch=False):
-        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text, clarified_text="c")
+    def fake_pipeline(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
+        yield AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
 
     envelope_mock = MagicMock()
     envelope_mock.to_dict.return_value = {"care_plan": {}, "metrics": {"saved_id": None}}
@@ -1007,13 +1222,13 @@ def test_job_completion_clears_top_level_input_text(
 @patch("utils.firebase.firestore.client")
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
-def test_job_failure_also_clears_top_level_input_text(
-    mock_get_doc, mock_fail, mock_fs_client, client_worker
+def test_job_failure_with_loaded_empty_input(
+    mock_get_doc, mock_fail, mock_fs_client, client_worker, monkeypatch
 ):
     doc = _make_job_doc_with_pdf_upload()
-    doc["input_text"] = "short"  # triggers the MIN_MEANINGFUL_CONTENT_CHARS EMPTY_DOCUMENT path
     mock_get_doc.return_value = doc
     mock_fs_client.return_value = MagicMock()
+    monkeypatch.setattr("routes.worker.load_job_input", lambda job: ("short", []))
 
     resp = client_worker.post("/internal/jobs/execute/job-1", headers=QUEUE_HEADER)
 
@@ -1024,15 +1239,15 @@ def test_job_failure_also_clears_top_level_input_text(
 @patch("utils.firebase.firestore.client")
 @patch("routes.worker.fail_job")
 @patch("routes.worker.get_job_doc")
-def test_job_unexpected_exception_clears_top_level_input_text(
+def test_job_unexpected_exception_with_loaded_input(
     mock_get_doc, mock_fail, mock_fs_client, client_worker
 ):
-    """The bottom except-Exception handler must also call fail_job (which
-    unconditionally clears input_text), not just the "clean" fail paths."""
+    """The bottom except-Exception handler must call fail_job for a pipeline
+    exception, not just for clean terminal paths."""
     mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
     mock_fs_client.return_value = MagicMock()
 
-    def fake_pipeline_raises(text, metrics, grading_enabled, source_kind="text", is_batch=False):
+    def fake_pipeline_raises(text, units, metrics, grading_enabled, source_kind="text", is_batch=False):
         raise RuntimeError("boom")
         yield  # pragma: no cover -- keeps this a generator function
 
