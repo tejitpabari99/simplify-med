@@ -337,6 +337,15 @@
         "frequency": "daily",
         "duration": "for 2 weeks",
         "status": "to_do"
+      },
+      {
+        "title": "Track symptoms in a log",
+        "why": null,
+        "steps": [],
+        "description": "Write down any new symptoms you notice.",
+        "frequency": "",
+        "duration": "",
+        "status": "to_do"
       }
     ],
     "follow_up": [

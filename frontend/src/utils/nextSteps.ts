@@ -42,6 +42,20 @@ function joinDetail(...parts: Array<string | undefined>): string | undefined {
   return present.length ? present.join(' · ') : undefined;
 }
 
+export const WHY_NOT_STATED = 'Not stated in your note.';
+
+// Single point through which BOTH CarePlanView.tsx and buildPdfHtml.ts see
+// "why" -- neither reads Medication/Test/Procedure/OtherInstruction.why
+// directly (verified: repo-wide grep for `.why` under frontend/src finds
+// no other read site). A falsy check, not `== null`, so a stray "" that
+// somehow reaches this function (it shouldn't -- the backend validator in
+// S4.1 normalizes "" to None before this ever leaves the API) still gets
+// the same fallback rather than rendering a blank "Why:" line, which is
+// exactly the silent-omission failure mode this whole PRD exists to close.
+function resolveWhy(why: string | null | undefined): string {
+  return why || WHY_NOT_STATED;
+}
+
 /** Builds the merged, status-then-type-ordered Next Steps row list. The single
  * source of truth for ordering -- CarePlanView.tsx and buildPdfHtml.ts both
  * call this and neither re-implements the sort (brief decision-log row 61). */
@@ -56,16 +70,16 @@ export function buildNextStepsRows(carePlan: CarePlanContent): NextStepRow[] {
   // otherwise-fine result.
   const rows: NextStepRow[] = [
     ...(carePlan.medications ?? []).map((m): NextStepRow => ({
-      type: 'medication', status: m.status, title: withTitle(m), why: m.why,
+      type: 'medication', status: m.status, title: withTitle(m), why: resolveWhy(m.why),
       detail: joinDetail(m.dosage, m.frequency, m.timing, m.duration),
       change: m.change,
     })),
     ...(carePlan.tests ?? []).map((t): NextStepRow => ({
-      type: 'test', status: t.status, title: withTitle(t), why: t.why,
+      type: 'test', status: t.status, title: withTitle(t), why: resolveWhy(t.why),
       detail: joinDetail(t.description, t.preparation),
     })),
     ...(carePlan.procedures ?? []).map((p): NextStepRow => ({
-      type: 'procedure', status: p.status, title: withTitle(p), why: p.why,
+      type: 'procedure', status: p.status, title: withTitle(p), why: resolveWhy(p.why),
       detail: joinDetail(p.what_to_expect, p.timeframe),
     })),
     ...(carePlan.follow_up ?? []).map((f): NextStepRow => ({
@@ -73,7 +87,7 @@ export function buildNextStepsRows(carePlan: CarePlanContent): NextStepRow[] {
       detail: joinDetail(f.time_frame),
     })),
     ...(carePlan.other ?? []).map((o): NextStepRow => ({
-      type: 'other', status: o.status, title: o.title, why: o.why, steps: o.steps,
+      type: 'other', status: o.status, title: o.title, why: resolveWhy(o.why), steps: o.steps,
       detail: joinDetail(o.description, o.frequency, o.duration),
     })),
   ];

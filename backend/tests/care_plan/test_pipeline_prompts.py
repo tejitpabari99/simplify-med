@@ -90,12 +90,29 @@ def test_ground_prompt_lists_all_eight_categories():
 # 4. Assemble prompt content guards (PRD 04 §7.2)
 # ---------------------------------------------------------------------------
 
-def test_assemble_prompt_contains_not_stated_sentinel():
-    assert "Not stated in your note." in _ASSEMBLE_PROMPT
+def test_assemble_prompt_not_stated_rule_instructs_null():
+    assert "Not stated in your note." not in _ASSEMBLE_PROMPT
+    not_stated_start = _ASSEMBLE_PROMPT.index("\nNOT STATED --")
+    next_section_start = _ASSEMBLE_PROMPT.index("\nMERGE --")
+    not_stated_section = _ASSEMBLE_PROMPT[not_stated_start:next_section_start]
+    assert "null" in not_stated_section
 
 
 def test_assemble_prompt_contains_merge_example():
     assert "left and right heart arteries" in _ASSEMBLE_PROMPT
+
+
+def test_assemble_prompt_contains_three_way_merge_example():
+    assert "circumflex" in _ASSEMBLE_PROMPT
+    assert "left anterior descending" in _ASSEMBLE_PROMPT
+
+
+def test_assemble_prompt_merge_rule_names_source_fact_ids():
+    merge_start = _ASSEMBLE_PROMPT.index("\nMERGE --")
+    next_section_start = _ASSEMBLE_PROMPT.index("\nLOW PRIORITY --")
+    merge_section = _ASSEMBLE_PROMPT[merge_start:next_section_start]
+
+    assert "source_fact_ids" in merge_section
 
 
 def test_assemble_prompt_questions_rule_has_no_minimum():
@@ -118,6 +135,30 @@ def test_assemble_prompt_lists_all_eight_mapping_rows():
         "warning_signs",
     ):
         assert category in mapping_section
+
+
+def test_assemble_prompt_mapping_lists_source_fact_ids_for_reason_for_visit_and_diagnosis():
+    # Both "MAPPING" and "SOURCE_FACT_IDS" also appear earlier in the file's
+    # step-1 instructions ("...(see MAPPING)...(see SOURCE_FACT_IDS)..."), so a
+    # plain `.index("MAPPING")` / `.index("SOURCE_FACT_IDS")` pair lands on
+    # that sentence, not the paragraph headings below it -- the resulting
+    # slice would not contain the actual MAPPING rows at all. Anchor on the
+    # `" -- "` heading form, and search for SOURCE_FACT_IDS starting after the
+    # MAPPING heading, to isolate the real MAPPING paragraph.
+    mapping_start = _ASSEMBLE_PROMPT.index("MAPPING --")
+    mapping_section = _ASSEMBLE_PROMPT[mapping_start:_ASSEMBLE_PROMPT.index("SOURCE_FACT_IDS --", mapping_start)]
+    reason_line = next(l for l in mapping_section.splitlines() if l.startswith("- reason_for_visit"))
+    diagnosis_line = next(l for l in mapping_section.splitlines() if l.startswith("- diagnosis"))
+    assert "source_fact_ids" in reason_line
+    assert "source_fact_ids" in diagnosis_line
+
+
+def test_assemble_prompt_source_fact_ids_rule_no_longer_exempts_reason_for_visit_and_diagnosis():
+    assert "reason_for_visit and diagnosis items have no such field" not in _ASSEMBLE_PROMPT
+
+
+def test_assemble_prompt_names_changed_since_last_visit_fact_ids():
+    assert "changed_since_last_visit_fact_ids" in _ASSEMBLE_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +227,9 @@ def test_correct_prompt_contains_pii_sweep_instruction():
     assert "PII SWEEP" in _CORRECT_PROMPT
 
 
-def test_correct_prompt_contains_not_stated_sentinel():
-    assert "Not stated in your note." in _CORRECT_PROMPT
+def test_correct_prompt_not_stated_rule_instructs_null():
+    assert "Not stated in your note." not in _CORRECT_PROMPT
+    assert "null" in _CORRECT_PROMPT
 
 
 def test_style_rules_is_non_empty_and_shared():
@@ -198,3 +240,55 @@ def test_style_rules_is_non_empty_and_shared():
     # not merely copied.
     assert "Doctor Alok Singh" in _STYLE_RULES
     assert "Doctor Alok Singh" not in _ASSEMBLE_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# 6. NUMERACY content-regression tests (PRD 10 §4.1, §7.1)
+# ---------------------------------------------------------------------------
+
+def test_style_rules_contains_numeracy_block():
+    assert "NUMERACY" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_added_label():
+    assert "blood pressure 158/96" in _STYLE_RULES
+    assert "unless the fact itself uses that word" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_reference_range():
+    assert "normal range 4.0-5.6%" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_rounding():
+    assert "ejection fraction 42%" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_unit_conversion():
+    assert "creatinine 1.4 mg/dL" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_forbids_percentage_frequency_reframe():
+    assert "3 out of 10 times" in _STYLE_RULES
+
+
+def test_style_rules_numeracy_permits_source_stated_interpretation():
+    assert "indicating poor control" in _STYLE_RULES
+
+
+def test_assemble_and_correct_prompts_both_receive_numeracy_block():
+    assembled = _ASSEMBLE_PROMPT.format(
+        schema="{}",
+        facts_block="[1] medications: x",
+        style_rules=_STYLE_RULES,
+        sub_block="s",
+        medical_block="m",
+        abbrev_block="a",
+    )
+    corrected = _CORRECT_PROMPT.format(
+        corrections_block="c",
+        style_rules=_STYLE_RULES,
+        care_plan_block="{}",
+        schema="{}",
+    )
+    assert "NUMERACY" in assembled
+    assert "NUMERACY" in corrected

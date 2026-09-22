@@ -7,7 +7,16 @@ import pytest
 from pydantic import ValidationError
 
 from models.care_plan import CarePlan
-from models.care_plan.care_plan import Diagnosis, WarningSign
+from models.care_plan.care_plan import (
+    Diagnosis,
+    DiagnosisDetail,
+    Medication,
+    OtherInstruction,
+    Procedure,
+    ReasonForVisit,
+    Test,
+    WarningSign,
+)
 from utils.constants import Constants
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "care_plan.json"
@@ -113,3 +122,36 @@ def test_medication_source_fact_ids_defaults_empty():
     from models.care_plan.care_plan import Medication
     med = Medication(title="x", status="to_do")
     assert med.source_fact_ids == []
+
+
+def test_reason_for_visit_source_fact_ids_defaults_to_empty_list():
+    assert ReasonForVisit().source_fact_ids == []
+
+
+def test_diagnosis_detail_source_fact_ids_defaults_to_empty_list():
+    assert DiagnosisDetail().source_fact_ids == []
+
+
+def test_diagnosis_changed_since_last_visit_fact_ids_defaults_to_empty_list():
+    assert Diagnosis().changed_since_last_visit_fact_ids == []
+
+
+@pytest.mark.parametrize("model_cls", [Medication, Test, Procedure, OtherInstruction])
+def test_why_defaults_to_none(model_cls):
+    assert model_cls(status="to_do").why is None
+
+
+@pytest.mark.parametrize("model_cls", [Medication, Test, Procedure, OtherInstruction])
+def test_why_accepts_explicit_none(model_cls):
+    assert model_cls(status="to_do", why=None).why is None
+
+
+@pytest.mark.parametrize("model_cls", [Medication, Test, Procedure, OtherInstruction])
+def test_why_empty_string_normalizes_to_none(model_cls):
+    assert model_cls(status="to_do", why="").why is None
+
+
+@pytest.mark.parametrize("model_cls", [Medication, Test, Procedure, OtherInstruction])
+def test_why_preserves_real_text(model_cls):
+    assert model_cls(status="to_do", why="Prescribed for high blood pressure.").why == \
+        "Prescribed for high blood pressure."

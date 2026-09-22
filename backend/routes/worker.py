@@ -43,15 +43,23 @@ def _strip_internal_provenance(care_plan: dict) -> None:
     `envelope.to_dict()` by the time this runs) in place.
 
     `summary_fact_ids` is one flat top-level key. `source_fact_ids` is
-    nested one-per-item inside six separate item lists, so this cannot be
+    nested one-per-item inside seven separate item lists, so this cannot be
     a single `.pop()` the way `raw`'s removal could be -- each list has
-    to be walked.
+    to be walked. `diagnosis` is handled separately because its citation
+    fields sit one level below `care_plan`
+    (`diagnosis.details[].source_fact_ids`,
+    `diagnosis.changed_since_last_visit_fact_ids`), not as a flat top-level
+    per-item list like the other seven (PRD 18 §4.3/§4.5).
     """
     care_plan.pop("raw", None)
     care_plan.pop("summary_fact_ids", None)
-    for _key in ("medications", "tests", "procedures", "other", "follow_up", "warning_signs"):
+    for _key in ("reason_for_visit", "medications", "tests", "procedures", "other", "follow_up", "warning_signs"):
         for _item in care_plan.get(_key, []):
             _item.pop("source_fact_ids", None)
+    _diagnosis = care_plan.get("diagnosis") or {}
+    _diagnosis.pop("changed_since_last_visit_fact_ids", None)
+    for _detail in _diagnosis.get("details", []):
+        _detail.pop("source_fact_ids", None)
 
 
 # ── Job execution handler ──────────────────────────────────────────────────────

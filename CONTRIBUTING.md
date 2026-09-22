@@ -84,6 +84,7 @@ opening a PR.
 - CI must pass (backend lint + tests, frontend type-check + lint + tests + build) before
   a PR is merged.
 - Prefer small, reviewable commits over one large commit.
+- If your PR changes the pipeline's step sequence, call signature, prompt files, job-document schema, or GCS transport shape, update the corresponding section of `docs/` in the same PR.
 
 ## Code style
 

@@ -1,12 +1,13 @@
 """Tests for CarePlanPipeline.iter_steps() — the canonical step-by-step generator."""
 
+import logging
 from unittest.mock import MagicMock
 
 from care_plan.pipeline import CarePlanPipeline
 from models.care_plan.care_plan import CarePlan
 from models.ledger import Fact
 from models.pipeline_events import PipelineRunResult, PipelineStepError, StepEvent
-from models.review import ReviewResult
+from models.review import CoverageEntry, ReviewResult
 from utils.constants import Constants
 
 
@@ -137,6 +138,60 @@ def test_iter_steps_review_failure_is_non_fatal(monkeypatch):
     assert not [event for event in events if isinstance(event, PipelineStepError)]
     p.correct.assert_not_called()
     assert _result_event(events).care_plan == CARE_PLAN_FIXTURE
+
+
+def test_iter_steps_logs_coverage_summary_when_review_returns_coverage(monkeypatch, caplog):
+    p = _make_pipeline(monkeypatch)
+    p.review = MagicMock(return_value=ReviewResult(
+        verdict="pass",
+        corrections=[],
+        coverage=[CoverageEntry(fact_id=1, present=False)],
+    ))
+
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        list(p.iter_steps("input text", []))
+
+    coverage_records = [
+        record for record in caplog.records
+        if record.getMessage().startswith("review: coverage signal")
+    ]
+    assert len(coverage_records) == 1
+    assert coverage_records[0].coverage_signal["omitted"] == 1
+    assert coverage_records[0].coverage_signal["total"] == 1
+
+
+def test_iter_steps_does_not_log_coverage_summary_when_review_is_none(monkeypatch, caplog):
+    p = _make_pipeline(monkeypatch)
+    p.review = MagicMock(side_effect=RuntimeError("review failed"))
+
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        list(p.iter_steps("text", []))
+
+    assert not [
+        record for record in caplog.records
+        if record.getMessage().startswith("review: coverage signal")
+    ]
+
+
+def test_iter_steps_does_not_log_coverage_summary_when_coverage_is_empty_list(monkeypatch, caplog):
+    """`_make_pipeline`'s default `p.review` returns `coverage=[]` with
+    `p.ground` returning a non-empty fact list (`FACT_FIXTURE`). Per PRD
+    §4.1, the `if review_result and review_result.coverage:` guard in
+    `iter_steps` is False when `coverage` is the empty list (falsy) --
+    `_log_coverage_summary` is never called, so its own internal handling of
+    "empty coverage but non-empty facts = 100% omitted" (exercised directly
+    in Task 4's unit tests) never fires through this path. This test pins
+    down the guard-level emptiness, not the helper's degenerate-case logic.
+    """
+    p = _make_pipeline(monkeypatch)
+
+    with caplog.at_level(logging.INFO, logger="care_plan.pipeline"):
+        list(p.iter_steps("text", []))
+
+    assert not [
+        record for record in caplog.records
+        if record.getMessage().startswith("review: coverage signal")
+    ]
 
 
 def test_iter_steps_correct_failure_falls_back_to_pre_correction_plan(monkeypatch):

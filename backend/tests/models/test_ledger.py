@@ -7,7 +7,14 @@ from models.ledger import Fact, Unit, quote_for
 
 
 def _unit(**overrides) -> Unit:
-    fields = dict(id=1, file="note.pdf", page=1, line=1, text="hello world")
+    fields = dict(
+        id=1,
+        file="note.pdf",
+        page=1,
+        line=1,
+        text="hello world",
+        extraction_method="native",
+    )
     fields.update(overrides)
     return Unit(**fields)
 
@@ -29,6 +36,16 @@ def test_unit_round_trips_through_dict():
     unit = _unit()
 
     assert Unit.from_dict(unit.to_dict()) == unit
+
+
+def test_unit_requires_extraction_method():
+    with pytest.raises(ValidationError):
+        Unit(id=1, file="f", page=1, line=1, text="x")
+
+
+def test_unit_rejects_invalid_extraction_method():
+    with pytest.raises(ValidationError):
+        _unit(extraction_method="scanned")
 
 
 def test_fact_round_trips_through_dict():
@@ -87,6 +104,7 @@ def test_quote_for_returns_unit_text_slice():
         page=1,
         line=1,
         text="Continue metoprolol 25 mg twice daily",
+        extraction_method="native",
     )
     start = unit.text.index("metoprolol 25 mg")
     end = start + len("metoprolol 25 mg")
