@@ -16,7 +16,7 @@ from utils.image_ocr import extract_text_from_image
 from utils.misc import extract_text_from_html, text_artifact_filename
 from utils.pdf import merge_pdfs, extract_pages_from_pdf
 from models.input import ResolvedInput
-from models.provenance import SourceSpan, JobInputPayload
+from models.provenance import SourceSpan, JobInputPayload, ExtractionMethod
 from errors import ErrorCode, SimplifyError
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,18 @@ def _get_extension(filename: str) -> str:
     if not filename or "." not in filename:
         return ""
     return filename.rsplit(".", 1)[1].lower()
+
+
+def _extraction_method_for_ext(ext: str) -> ExtractionMethod:
+    """Which extraction path backend/services/care_plan_input.py's own
+    extract_pages_from_bytes dispatches `ext` to -- OCR for every image
+    extension (extract_text_from_image, Gemini vision), native for
+    everything else (PyPDF2 for PDF, python-docx for DOCX, BeautifulSoup
+    for HTML, a plain decode for TXT). Mirrors extract_pages_from_bytes's
+    own dispatch exactly rather than re-deriving it -- if that function's
+    branches ever change, this one-line mapping is the only other place
+    that needs to change with it."""
+    return "ocr" if ext in Constants.Uploads.IMAGE_EXTENSIONS else "native"
 
 
 def is_allowed_extension(filename: str) -> bool:
@@ -346,6 +358,8 @@ def resolve_uploaded_files(
             raise
 
         filenames.append(filename)
+        ext = _get_extension(filename)
+        extraction_method = _extraction_method_for_ext(ext)
         for page_num, page_text in pages:
             page_text = page_text.strip()
             if not page_text:
@@ -353,11 +367,13 @@ def resolve_uploaded_files(
             page_line_count = len(page_text.split("\n"))
             start = global_line_count
             end = start + page_line_count - 1
-            provenance.append(SourceSpan(file=filename, page=page_num, start_line=start, end_line=end))
+            provenance.append(SourceSpan(
+                file=filename, page=page_num, start_line=start, end_line=end,
+                extraction_method=extraction_method,
+            ))
             text_parts.append(page_text)
             global_line_count = end + 1
 
-        ext = _get_extension(filename)
         if ext in {"pdf", "txt"} or ext in Constants.Uploads.IMAGE_EXTENSIONS:
             merge_candidates.append((file_bytes, filename))
         elif ext in {"docx", "html", "htm"} and real_content:

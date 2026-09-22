@@ -76,46 +76,46 @@ and it should be stated plainly rather than buried under the delta list below.
   pristine original before any rewriting" as the core fix for the same diagnosed failure mode:
   structuring/generation prompts fabricate when forced to complete required fields the source
   doesn't support. A's Stage 1→Stage 3 ordering and B's ground→assemble ordering are the same
-  inversion.
+  inversion. (DJ)
 - **Delete the forced-inference quotas.** Both independently identified the same root-cause bug in the
   same shape of prompt and deleted the same four rules: mandatory medication reason, mandatory
   warning-sign urgency/action, an exactly-three-sentence summary, and exactly-three questions. A
   calls this invariant 5 ("no quota completion"); B's brainstorm §1 opens with the identical
   diagnosis ("rules 4, 5, 9, 10... cannot both be satisfied") and decision-log row 34 records the
-  same four deletions, confirmed live in the shipped schema.
+  same four deletions, confirmed live in the shipped schema. (DJ)
 - **No clinically meaningful schema defaults.** A's invariant 1 and B's `WarningSign.urgency:
   Literal[...] | None` with no default (confirmed in `backend/models/care_plan/care_plan.py`) are
   the same fix — a nullable field, not a default that quietly asserts a clinical judgment nobody
-  made.
+  made. (DJ)
 - **Per-item, machine-checkable source citation with a deterministic drop guard.** A requires every
   non-empty patient-facing item to carry at least one source-fact ID, checked at Stage 4. B's
   `source_fact_ids` plus `_verify_assembly`'s citation-existence check
   (`backend/care_plan/pipeline.py`) drops any item whose citations don't resolve into the ledger.
-  Independently derived, functionally identical.
+  Independently derived, functionally identical. (DJ)
 - **Verbatim quote as the fabrication detector.** A requires a claim to quote its exact supporting
   substring; B's `_is_verbatim_quote` does the same normalized-substring check. Both treat a
-  non-matching quote as a hard, deterministic failure signal, not a soft one.
+  non-matching quote as a hard, deterministic failure signal, not a soft one. (DJ)
 - **The model cites an ID; metadata is recovered by lookup, never trusted from the model.** A's
   `segment_id` design and B's `Unit.id` (file/page recovered by code lookup, "cannot be
   hallucinated," brainstorm §3.2) are the same idea, with the same stated rationale: a
-  model-supplied metadata field can be hallucinated, a code-side lookup cannot.
+  model-supplied metadata field can be hallucinated, a code-side lookup cannot. (DJ)
 - **Deterministic checks run first and are pass/fail, not scored.** A's "hard status gates rather than
   aggregate confidence" (Stage 5) and B's three deterministic post-checks in
   `_verify_ledger`/`_verify_assembly` (drop-and-log, never vote) are the same philosophy:
-  deterministic gates precede and outrank LLM judgment.
+  deterministic gates precede and outrank LLM judgment. (DJ)
 - **Readability is telemetry, never a gate.** Both treat a readability/style score as diagnostic,
   never as proof of comprehension or a pass/fail safety condition. A states this throughout; B's
   decision-log row 65 keeps one before/after score and explicitly deletes a seven-method breakdown
-  from primary display.
+  from primary display. (DJ)
 - **AURA/attention-derived grounding is rejected as unavailable.** A explicitly declines to replicate
   AgenticSum's attention-based grounding signal because the product runs against a hosted Gemini API
   with no exposed internals. B never even considers such a mechanism — convergent by omission, from
-  the same underlying constraint (a hosted, non-open-weights model).
+  the same underlying constraint (a hosted, non-open-weights model). (DJ)
 - **"Translate, don't interpret."** A's constrained-generation instructions ("must not use clinical
   knowledge... treat only the supplied source as evidence") and B's LANGUAGE RULES ("never invent a
   number... never add urgency, prognosis, or medical advice beyond what a fact states,"
   `backend/care_plan/prompts/_style_rules.txt`) are the same source-only extraction discipline,
-  forbidding plausible clinical inference in the same place in the pipeline.
+  forbidding plausible clinical inference in the same place in the pipeline. (DJ)
 
 ---
 
@@ -154,16 +154,16 @@ job-scoped content hash (logged, not persisted with the patient's data) is a pre
 currently have.
 
 A broader pattern worth naming once, because it recurs throughout §4: **A frequently defers a hard
-question to "future evaluation," where B picks a concrete number and ships.** OCR-confidence
+question to "future evaluation," where B picks a concrete number and ships.** (DJ) OCR-confidence
 thresholds, chronology-resolution rules, duplicate-clustering thresholds, and
 coverage-severity/release thresholds are all explicitly left unresolved in A's docs, pending
 clinician-annotated calibration data A's own MVP section admits doesn't exist yet. B, by contrast,
 picks and documents concrete tunables everywhere — `_QUOTE_MIN_LENGTH=12`,
 `_QUOTE_LONG_WORD_MIN_LENGTH=7`, `_MAX_PII_TOKEN_DELTA=4` — and flags them honestly as
 not-yet-calibrated rather than blocking implementation on calibration that has no infrastructure to
-run. That is a more pragmatic sequencing choice for a product this size, but it is also exactly the
+run. (PD) That is a more pragmatic sequencing choice for a product this size, but it is also exactly the
 gap R7 targets: B's prose flags "not yet calibrated" but doesn't systematically distinguish a
-guessed number from an evidenced one the way A's RF/DJ/PD tagging would.
+guessed number from an evidenced one the way A's RF/DJ/PD tagging would. (DJ)
 
 ### 4.2 Fact ledger granularity
 
@@ -174,15 +174,15 @@ guessed number from an evidenced one the way A's RF/DJ/PD tagging would.
 
 Both cite the same paper (Asgari et al.) on the risk of atomizing before generation, and both use
 category taxonomies of comparable size (A: 15 categories; B: 8, each with an explicit boundary
-rule). Here is the sharp point: Asgari et al.'s finding is that an atomization-before-generation
-intermediate **worsened both major hallucinations and omissions**. A names this risk in its own
+rule). (RF) Here is the sharp point: Asgari et al.'s finding is that an atomization-before-generation
+intermediate **worsened both major hallucinations and omissions**. (RF) A names this risk in its own
 conflicts-and-limitations section and then builds atomize-then-generate anyway — its Stage 3 (AHRQ
 transformation) still drafts from the atomic ledger, hedged only as "must not become the sole
 input... empirically ablate later." B acted on the same evidence instead of hedging around it:
 brainstorm §2.5 rejects finer atomization explicitly, reasoning that over-atomizing "pushes real
 judgement into re-composition — which is where content gets dropped," and lands on clause
-granularity specifically to avoid the failure mode the citation warns about. On this specific point,
-B is the more internally consistent reading of the shared evidence than A is of its own.
+granularity specifically to avoid the failure mode the citation warns about. (DJ) On this specific point,
+B is the more internally consistent reading of the shared evidence than A is of its own. (DJ)
 
 ### 4.3 Evidence anchoring and grounding checks
 
@@ -397,9 +397,9 @@ discarded. Verified: `grep -rn "\.coverage\b" backend/` outside the review machi
 turns up nothing.
 
 The omission direction is exactly the failure mode A's evidence (Asgari et al.) identifies as
-genuinely distinct from fabrication, and it is exactly the one B's soundness-over-completeness
+genuinely distinct from fabrication, (RF) and it is exactly the one B's soundness-over-completeness
 inversion (`prds/README.md` "Consolidated open questions" item 2) made structurally invisible
-everywhere else in the pipeline. It is being computed and thrown away.
+everywhere else in the pipeline. (DJ) It is being computed and thrown away.
 
 Minimum fix: log the `present=False` fact ids with their `text` and `category` at WARNING. Better:
 fold the count into the run's structured log so the real omission rate becomes observable across
@@ -420,7 +420,7 @@ percentage as a frequency (or vice versa).
 A's Stage 3 numeracy section supplies exactly this, with negative examples: source "A1c 7.2%" must
 never render as "A1c 7.2% (above normal)." B's domain — clinical notes — is saturated with labs,
 vitals, and doses, and nothing in `_verify_assembly`'s deterministic guards or B's LANGUAGE RULES
-currently catches a model quietly adding an interpretive label to a bare number. This is a pure
+currently catches a model quietly adding an interpretive label to a bare number. (DJ) This is a pure
 prompt addition to `_style_rules.txt`, testable with two or three prompt-content regression tests in
 the style PRD 04 §7.2 already uses for other rules.
 
@@ -433,11 +433,11 @@ the *value inside a rendered field survived rendering intact*. An item that corr
 and renders its dose as "250 mg" when fact 47's text says "25 mg" passes every deterministic check
 in the pipeline — the only thing standing between that and the patient is the review LLM, which is
 (a) non-fatal by design, (b) documented in the brief's own cited literature as prone to
-rubber-stamping (arXiv:2310.08118), and (c) whose catch rate has never been measured — PRD 05 §7.5's
+rubber-stamping (arXiv:2310.08118), (RF) and (c) whose catch rate has never been measured — PRD 05 §7.5's
 injected-error protocol is specified but still unrun.
 
 A's Stage 4 protected-token parity check is the right mechanism, but its full form (a registry of
-protected fields plus hazard reason codes plus S0–S3 severity) is over-built for this product.
+protected fields plus hazard reason codes plus S0–S3 severity) is over-built for this product. (DJ)
 Reduced form: for each assembled item, tokenize numbers-with-units out of its rendered fields and
 out of the `text`/`quote_for()` of each fact in its `source_fact_ids`; if a number appears in the
 item that appears in none of its cited facts, log it. Once the false-positive rate is known from
@@ -457,7 +457,7 @@ because the check only asks whether the model's quote matches the unit's stored 
 that text was reliably extracted in the first place. This is, as the brief itself notes in its
 OCR-ceiling discussion, the one failure mode invisible to every other safeguard in the design —
 raising the downscale ceiling 2048→4096px helps legibility but does nothing to flag the residual
-misreads that remain.
+misreads that remain. (DJ)
 
 All the plumbing points already exist — the image/OCR branch of extraction is a distinct code path
 from native PDF/DOCX/TXT/HTML extraction. Add `extraction_method: Literal["native","ocr"]` to
@@ -481,7 +481,7 @@ before, as speculative generality for a consumer that doesn't exist yet.
 A requires a closed-vocabulary transformation tag
 (`copied`/`reordered`/`split`/`plain_language_substitution`/`abbreviation_expansion`/`defined_term`)
 on every claim, with a matching deterministic lint. The full taxonomy is unearned for a stateless
-product with no reviewer or downstream consumer to act on a rich tag set — but one bit targets a
+product with no reviewer or downstream consumer to act on a rich tag set (DJ) — but one bit targets a
 risk B's own brief already names in §5: "merging near-duplicate findings may quietly lose an
 anatomical variant." A boolean `merged` flag makes merged items findable in logs and in the one
 fixture the brief already wants (the left/right coronary artery merge case), at a fraction of A's
@@ -497,7 +497,7 @@ evidence ledger mapping each claim to its source and role. B's PRDs do something
 judgment" from "this number is a guess we haven't calibrated yet." B has several uncalibrated
 constants that are honestly flagged in prose but not systematically distinguishable from decisions
 backed by evidence: `_MAX_PII_TOKEN_DELTA=4`, `_QUOTE_MIN_LENGTH=12`,
-`GLOSSARY_CURATION_TIMEOUT_S=20`. Adopting A's RF/DJ/PD tagging convention in future design docs
+`GLOSSARY_CURATION_TIMEOUT_S=20`. (PD) Adopting A's RF/DJ/PD tagging convention in future design docs
 (starting with this branch's own follow-on work) costs nothing but discipline and would make exactly
 this kind of "is this evidenced or guessed" question answerable at a glance.
 
@@ -530,7 +530,7 @@ this kind of "is this evidenced or guessed" question answerable at a glance.
   deliberately violate it. B recognized this needs a deliberate, source-unfaithful exception and
   implemented it twice (assemble stage and corrector, both drawing from the shared
   `_style_rules.txt`): "This is the one case where you do not preserve a fact's exact wording — a
-  generic form loses the patient no clinical information."
+  generic form loses the patient no clinical information." (DJ)
 - The `matched_term`/`term` glossary keying bug — a concrete, shipping defect A's document-only
   methodology structurally cannot find, because A's evidence ledger cites `docs/pipeline.md` only
   and never reads `jargon_db.py` at implementation depth.
@@ -539,9 +539,9 @@ this kind of "is this evidenced or guessed" question answerable at a glance.
 - The required `status: to_do | done` field and the Next Steps information architecture, reasoned from
   asymmetric harm between two kinds of patient-facing mistakes A's schema has no vocabulary for at
   all.
-- Clause granularity as the more internally consistent reading of the shared Asgari evidence (§4.2) —
+- Clause granularity as the more internally consistent reading of the shared Asgari evidence (§4.2) (RF) —
   A names the atomization risk and builds around it anyway; B names it and changes its own design in
-  response.
+  response. (DJ)
 - The API/worker transport constraint and Firestore byte budget (§4.1) — a real, quantified
   engineering problem A's design never engages with because A never reads the current architecture
   beyond `docs/pipeline.md`.

@@ -7,7 +7,7 @@ CORRECTIONS:
 
 For a "correct" entry: replace that exact field's value with the value given, re-rendered in the same style as the rest of this document -- e.g. if the given value is raw clinical shorthand, render it the way this document already renders comparable values (units, abbreviation expansion, "you" phrasing). Confine the change to that field; do not extend it into a neighboring field or sentence.
 
-For a "not_stated" entry: set that exact field to precisely this text and nothing else: "Not stated in your note."
+For a "not_stated" entry: set that exact field to null (JSON null) -- not an empty string, and not any text.
 
 For a "remove" entry: delete that array item entirely. If the path is exactly "summary", set summary to "" instead (summary has no array position to delete).
 

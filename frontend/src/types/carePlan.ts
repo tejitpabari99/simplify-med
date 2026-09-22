@@ -30,7 +30,7 @@ export interface DiagnosisDetail {
 export interface Medication {
   title: string;
   plain_name?: string;
-  why?: string;
+  why?: string | null;
   dosage?: string;
   frequency?: string;
   timing?: string;
@@ -44,7 +44,7 @@ export interface Medication {
 export interface Test {
   title: string;
   plain_name?: string;
-  why?: string;
+  why?: string | null;
   description: string;
   preparation?: string;
   status: ItemStatus;
@@ -53,7 +53,7 @@ export interface Test {
 export interface Procedure {
   title: string;
   plain_name?: string;
-  why?: string;
+  why?: string | null;
   what_to_expect?: string;
   timeframe?: string;
   status: ItemStatus;
@@ -61,7 +61,7 @@ export interface Procedure {
 
 export interface OtherInstruction {
   title: string;
-  why?: string;
+  why?: string | null;
   steps?: string[];
   description?: string;
   frequency?: string;

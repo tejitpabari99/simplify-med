@@ -7,7 +7,9 @@ from models.provenance import JobInputPayload, SourceSpan
 
 
 def _span(**overrides) -> SourceSpan:
-    fields = dict(file="f.pdf", page=1, start_line=0, end_line=3)
+    fields = dict(
+        file="f.pdf", page=1, start_line=0, end_line=3, extraction_method="native"
+    )
     fields.update(overrides)
     return SourceSpan(**fields)
 
@@ -20,9 +22,27 @@ def test_source_span_round_trips_through_dict():
 
 def test_source_span_rejects_unknown_field():
     with pytest.raises(ValidationError):
-        SourceSpan(file="f", page=1, start_line=0, end_line=1, extra="x")
+        SourceSpan(
+            file="f",
+            page=1,
+            start_line=0,
+            end_line=1,
+            extraction_method="native",
+            extra="x",
+        )
 
 
+def test_source_span_requires_extraction_method():
+    with pytest.raises(ValidationError):
+        SourceSpan(file="f", page=1, start_line=0, end_line=1)
+
+
+def test_source_span_rejects_invalid_extraction_method():
+    with pytest.raises(ValidationError):
+        _span(extraction_method="scanned")
+
+
+# Also exercises extraction_method's round-trip through JobInputPayload (via _span()).
 def test_job_input_payload_round_trips_through_to_dict_from_dict():
     payload = JobInputPayload(
         text="Assessment:\n- Monitor blood pressure.\n- Follow up next week.",

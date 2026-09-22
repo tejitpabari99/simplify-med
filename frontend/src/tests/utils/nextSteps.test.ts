@@ -150,4 +150,19 @@ describe('buildNextStepsRows', () => {
     const rows = buildNextStepsRows(carePlan);
     expect(rows.every(r => !r.change)).toBe(true);
   });
+
+  it('falls back to the not-stated text when why is null', () => {
+    const rows = buildNextStepsRows(baseCarePlan({ medications: [medication({ why: null })] }));
+    expect(rows[0].why).toBe('Not stated in your note.');
+  });
+
+  it('falls back to the not-stated text when why is undefined', () => {
+    const rows = buildNextStepsRows(baseCarePlan({ medications: [medication({})] }));
+    expect(rows[0].why).toBe('Not stated in your note.');
+  });
+
+  it('passes through a real why value unchanged', () => {
+    const rows = buildNextStepsRows(baseCarePlan({ medications: [medication({ why: 'For blood pressure.' })] }));
+    expect(rows[0].why).toBe('For blood pressure.');
+  });
 });

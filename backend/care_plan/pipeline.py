@@ -259,13 +259,15 @@ def _verify_ledger(drafts: list[_GroundedFactRaw], units: list[Unit]) -> list[Fa
         if not _is_verbatim_quote(draft.quote, unit.text):
             logger.warning(
                 "grounding: dropping fact citing unit_id=%d -- quote not found "
-                "verbatim in unit text (category=%s)", draft.unit_id, draft.category,
+                "verbatim in unit text (category=%s, extraction_method=%s)",
+                draft.unit_id, draft.category, unit.extraction_method,
             )
             continue
         if not _is_informative_quote(draft.quote):
             logger.warning(
                 "grounding: dropping fact citing unit_id=%d -- quote fails "
-                "informativeness floor (category=%s)", draft.unit_id, draft.category,
+                "informativeness floor (category=%s, extraction_method=%s)",
+                draft.unit_id, draft.category, unit.extraction_method,
             )
             continue
         char_start, char_end = _locate_quote_offsets(draft.quote, unit.text)
@@ -280,6 +282,29 @@ def _verify_ledger(drafts: list[_GroundedFactRaw], units: list[Unit]) -> list[Fa
             )
         )
     return [fact.model_copy(update={"id": i}) for i, fact in enumerate(verified, start=1)]
+
+
+def _log_grounding_extraction_signal(facts: list[Fact], units_by_id: dict[int, Unit]) -> None:
+    """One INFO-level, per-run aggregate of how many VERIFIED facts cite an
+    OCR-extracted unit (PRD 12 SS4.8.2) -- log-only, mirrors 11's
+    _log_coverage_summary in shape/placement (one aggregate call sitting
+    next to the deterministic checks it summarizes, not inside them). No-op
+    for an empty ledger -- ground() raises PIPELINE_VALIDATION_FAILED for
+    that case immediately after this call anyway (SS4.5, unchanged), so
+    logging a 0/0 aggregate right before a hard failure would be noise."""
+    if not facts:
+        return
+    ocr = sum(1 for f in facts if units_by_id[f.unit_id].extraction_method == "ocr")
+    total = len(facts)
+    logger.info(
+        "grounding: %d/%d verified facts cite an OCR-extracted unit",
+        ocr, total,
+        extra={"extraction_signal_facts": {
+            "total": total,
+            "ocr": ocr,
+            "ocr_rate": ocr / total,
+        }},
+    )
 
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -346,7 +371,22 @@ def _format_facts_for_prompt(facts: list[Fact]) -> str:
     return "\n".join(lines)
 
 
-_ITEM_LIST_FIELDS = ("medications", "tests", "procedures", "other", "follow_up", "warning_signs")
+_ITEM_LIST_FIELDS = (
+    "reason_for_visit", "medications", "tests", "procedures", "other", "follow_up", "warning_signs",
+)
+
+# Every top-level CarePlan field must appear in exactly one of the three
+# sets below (PRD 18 S7.5) -- this is what turns "a new field was added
+# with no soundness decision" into a failing test instead of a silent gap,
+# the exact failure mode this PRD exists to close for diagnosis/reason_for_visit.
+_SOUNDNESS_CHECKED_FIELDS = frozenset(_ITEM_LIST_FIELDS) | {"diagnosis", "summary"}
+_SOUNDNESS_EXEMPT_FIELDS = {
+    "questions": "deliberately ungrounded by design (brief S2.5) -- PRD 18 S4.1",
+    "low_priority": "demoted low-stakes content, LLM fidelity review only, no deterministic check -- PRD 18 S4.6",
+    "terms": "glossary entries from a fixed reference wordlist, not a model-asserted clinical claim -- PRD 18 S4.1",
+    "note": "upload metadata, never model output -- PRD 18 S4.1",
+}
+_SOUNDNESS_NOT_APPLICABLE_FIELDS = {"doc_type", "version", "summary_fact_ids"}
 
 # Content-richness floor (PRD 04 §9, resolving the prior [DEFERRED] item) --
 # reuses 03's _is_informative_quote / _QUOTE_MIN_LENGTH /
@@ -370,8 +410,10 @@ def _log_thin_fields(model: CarePlan) -> None:
     NOT STATED, there is no fallback value to substitute for a field the
     model DID fill in, and dropping an otherwise-backed item over one thin
     field would remove genuine content the brief's "remove nothing"
-    principle protects. "Not stated in your note." (25 chars) always clears
-    the length rule on its own, so the sentinel is never flagged here."""
+    principle protects. why may be None (not stated) -- None is falsy, so
+    it short-circuits the `if value and ...` guard below before
+    _is_informative_quote is ever called on it (PRD 13 §4.3); a thin-but-
+    present why still gets flagged exactly as before."""
     for field, attr in _RICHNESS_CHECKS:
         for index, item in enumerate(getattr(model, field)):
             value = getattr(item, attr, "")
@@ -417,10 +459,12 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
         )
         updates["summary_fact_ids"] = [i for i in model.summary_fact_ids if i in valid_ids]
 
+    multi_fact_counts: dict[str, int] = {}
     for field in _ITEM_LIST_FIELDS:
         items = getattr(model, field)
         kept = []
         changed = False
+        multi_fact = 0
         for item in items:
             cited = [i for i in item.source_fact_ids if i in valid_ids]
             if not cited:
@@ -439,11 +483,284 @@ def _verify_assembly(model: CarePlan, facts: list[Fact]) -> CarePlan:
                 )
                 item = item.model_copy(update={"source_fact_ids": cited})
                 changed = True
+            if len(cited) > 1:
+                multi_fact += 1
             kept.append(item)
+        if multi_fact:
+            multi_fact_counts[field] = multi_fact
         if changed:
             updates[field] = kept
 
-    return model.model_copy(update=updates) if updates else model
+    # diagnosis is the one nested container on CarePlan -- model.diagnosis.details
+    # is a list of DiagnosisDetail one level below CarePlan itself, so it cannot
+    # sit in the flat _ITEM_LIST_FIELDS loop above. Handled as a second, dedicated
+    # block, mirroring _log_thin_fields' own precedent (a flat loop, then one
+    # dedicated loop for model.diagnosis.details) for the same reason: exactly
+    # one nested container exists on the whole schema (PRD 18 §4.1's field
+    # audit), and a generalized nested-path descriptor for a single occurrence
+    # is speculative complexity this project's posture argues against.
+    diagnosis_updates: dict = {}
+
+    kept_details: list = []
+    details_changed = False
+    for detail in model.diagnosis.details:
+        cited = [i for i in detail.source_fact_ids if i in valid_ids]
+        if not cited:
+            logger.warning(
+                "assemble_and_render: dropping unbacked diagnosis.details item -- "
+                "source_fact_ids=%r cited nothing in the ledger", detail.source_fact_ids,
+            )
+            details_changed = True
+            continue
+        if len(cited) != len(detail.source_fact_ids):
+            logger.warning(
+                "assemble_and_render: dropping hallucinated source_fact_ids on a "
+                "diagnosis.details item: %s",
+                [i for i in detail.source_fact_ids if i not in valid_ids],
+            )
+            detail = detail.model_copy(update={"source_fact_ids": cited})
+            details_changed = True
+        kept_details.append(detail)
+    if details_changed:
+        diagnosis_updates["details"] = kept_details
+
+    if model.diagnosis.changed_since_last_visit:
+        cited = [i for i in model.diagnosis.changed_since_last_visit_fact_ids if i in valid_ids]
+        if not cited:
+            logger.warning(
+                "assemble_and_render: dropping uncited diagnosis.changed_since_last_visit "
+                "claim (len=%d) -- source_fact_ids=%r cited nothing in the ledger",
+                len(model.diagnosis.changed_since_last_visit),
+                model.diagnosis.changed_since_last_visit_fact_ids,
+            )
+            diagnosis_updates["changed_since_last_visit"] = ""
+            diagnosis_updates["changed_since_last_visit_fact_ids"] = []
+        elif len(cited) != len(model.diagnosis.changed_since_last_visit_fact_ids):
+            diagnosis_updates["changed_since_last_visit_fact_ids"] = cited
+
+    if diagnosis_updates:
+        updates["diagnosis"] = model.diagnosis.model_copy(update=diagnosis_updates)
+
+    result = model.model_copy(update=updates) if updates else model
+    _check_numeric_parity(result, facts)   # PRD 10 R3 -- log-only, never mutates `result`
+
+    total_multi_fact = sum(multi_fact_counts.values())
+    logger.info(
+        "assemble_and_render: %d item(s) across %d section(s) cite more than "
+        "one fact -- candidate near-duplicate merges (a superset: an item "
+        "legitimately built from several complementary facts also counts), "
+        "by section: %s",
+        total_multi_fact, len(multi_fact_counts), multi_fact_counts,
+        extra={"merge_candidate_signal": {
+            "total": total_multi_fact, "by_section": multi_fact_counts,
+        }},
+    )
+
+    return result
+
+
+_UNIT_WORD_MAX_LENGTH = 15  # reasoned, not calibrated (PRD 10 §4.2): long enough
+# for the longest realistic compound lab unit (mmol/L, mIU/mL), short enough
+# that it can't silently swallow the start of the next clinical word if a
+# unit is missing.
+
+_UNIT_WORD_RE = rf"%|[A-Za-z][A-Za-z%/]{{0,{_UNIT_WORD_MAX_LENGTH - 1}}}"
+
+# Reasoned, not calibrated (PRD 10 review): a closed vocabulary of clinical
+# units/counts, used only to decide whether a slash pair ("4/12") is a bare
+# date or a unit-bearing ratio (_BARE_DATE_RE) and to keep an arbitrary
+# following word (a drug or person name) out of the numeric-parity log
+# (_check_numeric_parity). Deliberately not the same thing as _UNIT_WORD_RE,
+# which stays a permissive shape-only match for the tokenizer itself.
+_KNOWN_UNIT_WORDS: frozenset[str] = frozenset({
+    "%", "mg", "mcg", "µg", "ug", "g", "gm", "kg", "lb", "lbs", "oz",
+    "ml", "l", "dl", "cc", "unit", "units", "iu", "meq", "mmol", "mmhg",
+    "bpm", "mg/dl", "mmol/l", "g/dl", "mg/kg", "mcg/kg", "miu/ml", "u/l",
+    "tablet", "tablets", "tab", "tabs", "pill", "pills", "capsule",
+    "capsules", "cap", "caps", "puff", "puffs", "drop", "drops", "spray",
+    "sprays", "patch", "patches", "cup", "cups", "tsp", "tbsp",
+    "teaspoon", "teaspoons", "tablespoon", "tablespoons", "dose", "doses",
+    "inch", "inches", "cm", "mm", "hour", "hours", "hr", "hrs", "minute",
+    "minutes", "min", "day", "days", "week", "weeks", "month", "months",
+    "year", "years",
+})
+
+_NUMBER_TOKEN_RE = re.compile(
+    r"""
+    (?P<num>
+        \d{1,3}(?:,\d{3})+(?:\.\d+)?        # 1,000 or 1,000.5
+      | \d+/\d+                             # fraction OR ratio/date shape: 1/2, 158/96, 4/12
+      | \d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?   # range: 5-10, 5.5-10.2
+      | \d+(?:\.\d+)?                       # plain integer or decimal
+    )
+    [ ]?
+    (?P<unit>""" + _UNIT_WORD_RE + r""")?
+    """,
+    re.VERBOSE,
+)
+
+
+def _normalize_number(raw: str) -> str:
+    """Canonicalize one bare number's own digits -- leading zeros, thousands
+    separators, and a trailing decimal zero are formatting, not value, per
+    the same principle assemble_and_render.txt's own worked example applies
+    to unit spacing ("25mg" -> "25 mg" is a style change). Called on each
+    component of a range/fraction separately, never on the whole thing."""
+    raw = raw.replace(",", "")
+    if "." in raw:
+        integer_part, _, frac_part = raw.partition(".")
+        frac_part = frac_part.rstrip("0")
+        integer_part = integer_part.lstrip("0") or "0"
+        return f"{integer_part}.{frac_part}" if frac_part else integer_part
+    return raw.lstrip("0") or "0"
+
+
+_TIME_OF_DAY_RE = re.compile(r"\b\d{1,2}:\d{2}\b")
+
+# A slash pair is a unit-bearing ratio, not a bare date, only when followed
+# by a *known* unit word -- not just any word (PRD 10 review: the original
+# `[A-Za-z%]` lookahead matched literally any following word, so "4/12 with
+# cardiology" was misread as unit-bearing and never excluded as a date).
+# "%" needs no trailing \b (it isn't a word character); every other known
+# unit word must end at one, so "4/120mg" doesn't count "mg0" as "mg".
+_bare_date_alpha_units = sorted((w for w in _KNOWN_UNIT_WORDS if w != "%"), key=len, reverse=True)
+_BARE_DATE_UNIT_LOOKAHEAD = (
+    r"(?:%|(?:" + "|".join(re.escape(w) for w in _bare_date_alpha_units) + r")\b)"
+)
+_BARE_DATE_RE = re.compile(
+    r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b(?![ \t]*" + _BARE_DATE_UNIT_LOOKAHEAD + r")",
+    re.IGNORECASE,
+)
+_MONTH_NAMES = (
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+)
+_WRITTEN_DATE_RE = re.compile(
+    r"\b(?:" + "|".join(_MONTH_NAMES) + r")\.?\s+\d{1,2}(?:st|nd|rd|th)?\b",
+    re.IGNORECASE,
+)
+
+
+def _excluded_spans(text: str) -> list[tuple[int, int]]:
+    """Date/time-shaped spans, dropped from BOTH sides of every numeric-
+    parity comparison (PRD 10 §4.2's disclosed blind spot -- see there for
+    why). _BARE_DATE_RE's negative lookahead is what lets a unit-bearing
+    slash pair ("158/96 mmHg", "1/2 tablet") fall through untouched --
+    only a slash pair followed by a *known* unit word (_KNOWN_UNIT_WORDS),
+    not just any following word, is kept; every other slash pair is excluded
+    as a bare date. Any number token merely overlapping one of these spans
+    is dropped, not just one fully contained in it -- a trailing "AM"/"PM"/
+    word captured as that token's unit could otherwise leak the minutes out
+    of a time-of-day span."""
+    spans = [m.span() for m in _TIME_OF_DAY_RE.finditer(text)]
+    spans += [m.span() for m in _BARE_DATE_RE.finditer(text)]
+    spans += [m.span() for m in _WRITTEN_DATE_RE.finditer(text)]
+    return spans
+
+
+def _extract_number_tokens(text: str) -> set[tuple[str, str]]:
+    """Tokenize every number-with-optional-unit out of `text` into a set of
+    (normalized_number, normalized_unit) pairs; unit is "" when none is
+    attached. Excludes date/time-shaped spans entirely (see above); a number
+    token merely overlapping such a span is dropped, not just one fully
+    contained in it."""
+    excluded = _excluded_spans(text)
+    tokens: set[tuple[str, str]] = set()
+    for m in _NUMBER_TOKEN_RE.finditer(text):
+        if any(m.start() < e and m.end() > s for s, e in excluded):
+            continue
+        num, unit = m.group("num"), (m.group("unit") or "").lower()
+        if "/" in num:
+            num_norm = "/".join(_normalize_number(p) for p in num.split("/"))
+        elif "-" in num:
+            num_norm = "-".join(_normalize_number(p.strip()) for p in num.split("-"))
+        else:
+            num_norm = _normalize_number(num)
+        tokens.add((num_norm, unit))
+    return tokens
+
+
+_NUMERIC_PARITY_FIELDS: dict[str, tuple[str, ...]] = {
+    "medications": ("title", "plain_name", "why", "dosage", "frequency",
+                     "timing", "duration", "instructions",
+                     "side_effects_to_watch", "change"),
+    "tests": ("title", "plain_name", "why", "description", "preparation"),
+    "procedures": ("title", "plain_name", "why", "what_to_expect", "timeframe"),
+    "other": ("title", "why", "description", "frequency", "duration"),  # steps[] handled separately
+    "follow_up": ("time_frame", "description"),
+    "warning_signs": ("symptom", "what_it_might_mean", "what_to_do", "related_to"),
+}
+
+
+def _check_numeric_parity(model: CarePlan, facts: list[Fact]) -> None:
+    """R3 (PRD 10 §4.3/§4.4): log-only, model-free check that every number
+    a rendered field states was present in at least one fact the item
+    cites. Never mutates or drops anything -- unlike the citation-existence
+    guards above it, a numeric mismatch has no safe deterministic repair
+    (which side is right is exactly the judgement call this check cannot
+    make), so logging is this PRD's entire, LOCKED contract."""
+    facts_by_id = {f.id: f for f in facts}
+    mismatches = 0
+
+    def _backing_tokens(fact_ids: list[int]) -> set[tuple[str, str]]:
+        tokens: set[tuple[str, str]] = set()
+        for fid in fact_ids:
+            fact = facts_by_id.get(fid)
+            if fact is not None:
+                tokens |= _extract_number_tokens(fact.text)
+        return tokens
+
+    def _check_field(field: str, index: int | str, attr: str, value: str,
+                      backing: set[tuple[str, str]], num_cited: int) -> int:
+        if not value:
+            return 0
+        backing_numbers = {num for num, _unit in backing}
+        found = 0
+        for num, unit in _extract_number_tokens(value):
+            if (num, unit) in backing:
+                continue
+            found += 1
+            if num in backing_numbers:
+                # PHI/PII guard (PRD 10 review): `unit` is whatever word the
+                # tokenizer found after the number -- for an unrecognized
+                # word that can be a drug or person name, not a unit at all.
+                # Only log it when it's a known unit (or empty).
+                safe_unit = unit if unit == "" or unit in _KNOWN_UNIT_WORDS else "<non-unit word>"
+                logger.warning(
+                    "assemble_and_render: numeric parity -- %s[%s].%s has a "
+                    "value matching a cited fact's number but with a "
+                    "different or missing unit (unit=%r)",
+                    field, index, attr, safe_unit,
+                )
+            else:
+                logger.warning(
+                    "assemble_and_render: numeric parity -- %s[%s].%s "
+                    "contains a number not found in any of its %d cited "
+                    "fact(s)", field, index, attr, num_cited,
+                )
+        return found
+
+    for field, attrs in _NUMERIC_PARITY_FIELDS.items():
+        for index, item in enumerate(getattr(model, field)):
+            backing = _backing_tokens(item.source_fact_ids)
+            num_cited = len(item.source_fact_ids)
+            for attr in attrs:
+                mismatches += _check_field(field, index, attr, getattr(item, attr, ""), backing, num_cited)
+            if field == "other":
+                for step_idx, step in enumerate(item.steps):
+                    mismatches += _check_field(field, index, f"steps[{step_idx}]", step, backing, num_cited)
+
+    if model.summary:
+        mismatches += _check_field("summary", "-", "summary", model.summary,
+                                    _backing_tokens(model.summary_fact_ids),
+                                    len(model.summary_fact_ids))
+
+    if mismatches:
+        logger.warning(
+            "assemble_and_render: numeric parity check flagged %d mismatch(es) "
+            "in this care plan", mismatches,
+        )
 
 
 _WHY_PATH_RE = re.compile(r"^(medications|tests|procedures|other)\[\d+\]\.why$")
@@ -503,6 +820,50 @@ def _sanitize_review_result(result: ReviewResult, care_plan: CarePlan, facts: li
         coverage += [CoverageEntry(fact_id=i, present=False) for i in missing]
 
     return result.model_copy(update={"corrections": clean, "coverage": coverage})
+
+
+def _log_coverage_summary(coverage: list[CoverageEntry], facts: list[Fact]) -> None:
+    """Log-only consumer of the reviewer's enumerate-then-check-presence walk
+    (PRD 05 §4.3, brief §3.5) — makes the omission signal the pipeline
+    already computes and discards observable per-run, at the cost of one
+    structured log line (PRD 11 §1). Never raises, never returns a value,
+    never affects what iter_steps yields -- this is pure observability.
+
+    `present=False` here is a WEAK signal, not a verdict: an LLM asked
+    "is this present" performs near chance on omission (arXiv:2608.31016,
+    PRD 05 §1), and the coverage check's own published detection rate is
+    24.6% (brief §5's open-risk table) -- better than chance, far from
+    complete. This function does not claim otherwise; the log message
+    says so explicitly (below) so a reader of Cloud Logging doesn't
+    mistake a rate here for a validated omission measurement.
+
+    No fact text and no per-fact log line -- see PRD 11 §4.4 for why.
+    """
+    if not facts:
+        return
+    fact_by_id = {f.id: f for f in facts}
+    covered_ids = {e.fact_id for e in coverage if e.present and e.fact_id in fact_by_id}
+    omitted_ids = [fid for fid in fact_by_id if fid not in covered_ids]
+
+    total = len(fact_by_id)
+    omitted = len(omitted_ids)
+    by_category: dict[str, int] = {}
+    for fid in omitted_ids:
+        category = fact_by_id[fid].category
+        by_category[category] = by_category.get(category, 0) + 1
+
+    logger.info(
+        "review: coverage signal -- %d/%d ledger facts not flagged present by the "
+        "reviewer (rate=%.3f); WEAK signal (near-chance per-fact judgment, ~24.6%% "
+        "published detection rate) -- trend/observability only, not a per-fact verdict",
+        omitted, total, omitted / total,
+        extra={"coverage_signal": {
+            "total": total,
+            "omitted": omitted,
+            "rate": round(omitted / total, 4),
+            "omitted_by_category": by_category,
+        }},
+    )
 
 
 def _format_corrections_for_prompt(corrections: list[Correction]) -> str:
@@ -712,6 +1073,7 @@ class CarePlanPipeline:
                 raise SimplifyError(ErrorCode.PIPELINE_VALIDATION_FAILED, detail=_validation_error_detail(e), original=e)
 
         verified = _verify_ledger(drafts, units)
+        _log_grounding_extraction_signal(verified, {u.id: u for u in units})
         if not verified:
             raise SimplifyError(
                 ErrorCode.PIPELINE_VALIDATION_FAILED,
@@ -919,6 +1281,10 @@ class CarePlanPipeline:
             # Bundled under one progress-bar step deliberately (PRD §4.1) — none of
             # what happens here is something a patient needs itemized.
             yield StepEvent(step=_STEP.CORRECT.number, status="active", label=_STEP.CORRECT.label)
+
+            if review_result and review_result.coverage:
+                _log_coverage_summary(review_result.coverage, facts)
+
             if review_result and review_result.corrections:
                 try:
                     care_plan = _call(

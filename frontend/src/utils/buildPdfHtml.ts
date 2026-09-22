@@ -35,18 +35,22 @@ export function buildPdfHtml(result: SimplifiedCarePlan, grading?: Grading, opti
     sections.push(`${h2('Why You Came In')}${items}`);
   }
 
-  if (result.diagnosis && result.diagnosis.details?.length) {
+  if (result.diagnosis && (result.diagnosis.details?.length || result.reason_for_visit?.length || result.diagnosis.changed_since_last_visit)) {
     let diagnosis = '';
     if (result.diagnosis.changed_since_last_visit) {
       diagnosis += `<p style="color:#0F766E;margin:0 0 8px 0;">Compared to last visit: ${escapeHtml(result.diagnosis.changed_since_last_visit)}</p>`;
     }
-    diagnosis += (result.diagnosis.details ?? []).map(det =>
-      `<div style="padding:8px 12px;margin-bottom:6px;background:#F0FDF4;border-radius:6px;">
-        <strong>${escapeHtml(det.plain_name ? `${det.plain_name} (${det.title})` : det.title)}</strong>
-        ${det.description ? `<br><span style="color:#6B7280;font-size:13px;">${escapeHtml(det.description)}</span>` : ''}
-        ${det.what_it_means_for_you ? `<br><span style="color:#B45309;font-size:13px;">What this means for you: ${escapeHtml(det.what_it_means_for_you)}</span>` : ''}
-      </div>`,
-    ).join('');
+    if (!result.diagnosis.details?.length) {
+      diagnosis += `<p style="color:#6B7280;font-size:13px;margin:0 0 8px 0;">We couldn't confirm the specific findings from your note.</p>`;
+    } else {
+      diagnosis += result.diagnosis.details.map(det =>
+        `<div style="padding:8px 12px;margin-bottom:6px;background:#F0FDF4;border-radius:6px;">
+          <strong>${escapeHtml(det.plain_name ? `${det.plain_name} (${det.title})` : det.title)}</strong>
+          ${det.description ? `<br><span style="color:#6B7280;font-size:13px;">${escapeHtml(det.description)}</span>` : ''}
+          ${det.what_it_means_for_you ? `<br><span style="color:#B45309;font-size:13px;">What this means for you: ${escapeHtml(det.what_it_means_for_you)}</span>` : ''}
+        </div>`,
+      ).join('');
+    }
     sections.push(`${h2('What the Doctor Found')}${diagnosis}`);
   }
 

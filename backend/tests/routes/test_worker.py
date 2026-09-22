@@ -651,25 +651,117 @@ def test_job_completed_output_has_no_source_fact_ids(
     assert "source_fact_ids" not in saved_output_data["care_plan"]["tests"][0]
 
 
-def test_strip_internal_provenance_removes_summary_and_all_six_source_fact_ids():
+@patch("routes.worker.delete_gcs_object")
+@patch("utils.firebase.firestore.client")
+@patch("routes.worker.complete_job")
+@patch("routes.worker.update_job_stage")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
+def test_job_completed_output_has_no_reason_for_visit_source_fact_ids(
+    mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
+    mock_delete_gcs, client_worker,
+):
+    mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
+    mock_fs_client.return_value = MagicMock()
+
+    care_plan_mock = MagicMock()
+    grading_mock = MagicMock()
+
+    pipeline_events = lambda text, units, metrics, grading_enabled, source_kind="text", is_batch=False: iter([
+        AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
+    ])
+
+    envelope_mock = MagicMock()
+    envelope_mock.to_dict.return_value = {
+        "care_plan": {
+            "reason_for_visit": [{"reason": "Hypertension", "source_fact_ids": [1]}],
+        },
+        "metrics": {"saved_id": None},
+    }
+
+    with patch("routes.worker.run_care_plan_pipeline", pipeline_events):
+        with patch("routes.worker.CarePlanInternal", return_value=envelope_mock):
+            resp = client_worker.post(
+                "/internal/jobs/execute/job-1", headers=QUEUE_HEADER, content_type="application/json",
+            )
+
+    assert resp.status_code == 200
+    mock_complete.assert_called_once()
+    saved_output_data = mock_complete.call_args.args[1]
+    assert "source_fact_ids" not in saved_output_data["care_plan"]["reason_for_visit"][0]
+
+
+@patch("routes.worker.delete_gcs_object")
+@patch("utils.firebase.firestore.client")
+@patch("routes.worker.complete_job")
+@patch("routes.worker.update_job_stage")
+@patch("routes.worker.fail_job")
+@patch("routes.worker.get_job_doc")
+def test_job_completed_output_has_no_diagnosis_source_fact_ids(
+    mock_get_doc, mock_fail, mock_update_stage, mock_complete, mock_fs_client,
+    mock_delete_gcs, client_worker,
+):
+    mock_get_doc.return_value = _make_job_doc_with_pdf_upload()
+    mock_fs_client.return_value = MagicMock()
+
+    care_plan_mock = MagicMock()
+    grading_mock = MagicMock()
+
+    pipeline_events = lambda text, units, metrics, grading_enabled, source_kind="text", is_batch=False: iter([
+        AdapterResult(care_plan=care_plan_mock, grading=grading_mock, raw_text=text)
+    ])
+
+    envelope_mock = MagicMock()
+    envelope_mock.to_dict.return_value = {
+        "care_plan": {
+            "diagnosis": {
+                "details": [{"title": "Hypertension", "source_fact_ids": [1]}],
+                "changed_since_last_visit_fact_ids": [2],
+            },
+        },
+        "metrics": {"saved_id": None},
+    }
+
+    with patch("routes.worker.run_care_plan_pipeline", pipeline_events):
+        with patch("routes.worker.CarePlanInternal", return_value=envelope_mock):
+            resp = client_worker.post(
+                "/internal/jobs/execute/job-1", headers=QUEUE_HEADER, content_type="application/json",
+            )
+
+    assert resp.status_code == 200
+    mock_complete.assert_called_once()
+    saved_output_data = mock_complete.call_args.args[1]
+    assert "source_fact_ids" not in saved_output_data["care_plan"]["diagnosis"]["details"][0]
+    assert "changed_since_last_visit_fact_ids" not in saved_output_data["care_plan"]["diagnosis"]
+
+
+def test_strip_internal_provenance_removes_summary_and_all_seven_source_fact_ids():
     from routes.worker import _strip_internal_provenance
 
     care_plan = {
         "summary_fact_ids": [1, 2],
+        "reason_for_visit": [{"reason": "r", "source_fact_ids": [7]}],
         "medications": [{"title": "m", "source_fact_ids": [1]}],
         "tests": [{"title": "t", "source_fact_ids": [2]}],
         "procedures": [{"title": "p", "source_fact_ids": [3]}],
         "other": [{"title": "o", "source_fact_ids": [4]}],
         "follow_up": [{"title": "f", "source_fact_ids": [5]}],
         "warning_signs": [{"title": "w", "source_fact_ids": [6]}],
+        "diagnosis": {
+            "details": [{"title": "d", "source_fact_ids": [8]}],
+            "changed_since_last_visit_fact_ids": [9],
+        },
     }
 
     _strip_internal_provenance(care_plan)
 
     assert "summary_fact_ids" not in care_plan
-    for key in ("medications", "tests", "procedures", "other", "follow_up", "warning_signs"):
+    for key in ("reason_for_visit", "medications", "tests", "procedures", "other", "follow_up", "warning_signs"):
         assert "source_fact_ids" not in care_plan[key][0]
-        assert "title" in care_plan[key][0]
+        assert "title" in care_plan[key][0] or "reason" in care_plan[key][0]
+    assert "source_fact_ids" not in care_plan["diagnosis"]["details"][0]
+    assert "title" in care_plan["diagnosis"]["details"][0]
+    assert "changed_since_last_visit_fact_ids" not in care_plan["diagnosis"]
 
 
 def test_strip_internal_provenance_tolerates_missing_keys():

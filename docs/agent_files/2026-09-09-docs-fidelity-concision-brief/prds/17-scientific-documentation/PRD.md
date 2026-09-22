@@ -2,7 +2,7 @@
 
 Parent brief: `docs/agent_files/2026-09-09-docs-fidelity-concision-brief/brainstorm.v1.md` (not re-litigated here — see especially §2, §2.5, §3, §5). Comparison doc: `docs/agent_files/2026-09-09-docs-fidelity-concision-brief/comparison-drive-research-bundle.v1.md` (its §3 "where they agree" and §4 area-by-area comparison are this PRD's backbone; §7 records where the branch is ahead of the research).
 Branch: `docs/fidelity-concision-brief`.
-Depends on: 15 (design-doc-evidence-labeling — this PRD adopts the RF/DJ/PD vocabulary and the `docs/uncalibrated-constants.md` register PRD 15 §4.3 specifies, rather than re-deriving either), 16 (technical-documentation — this PRD's doc set slots into whatever `docs/` structure 16 lands; §9 records the cross-reference convention as a joint, currently-open decision).
+Depends on: 15 (design-doc-evidence-labeling — this PRD adopts the RF/DJ/PD vocabulary and the `docs/uncalibrated-constants.md` register PRD 15 §4.3 specifies, rather than re-deriving either), 16 (technical-documentation — this PRD's doc set slots into whatever `docs/` structure 16 lands; §9 records the cross-reference convention as a joint decision, reconciled with 16 §3; 16 creates and owns `docs/uncalibrated-constants.md`, 17 only links to it).
 Depended on by: none currently in this batch. A future evaluation-suite PRD (explicitly out of scope everywhere per the initiative's locked decisions) would be the natural consumer of this PRD's "what is not evidenced" section (§4.5 below) once it exists.
 
 ## 1. Problem
@@ -124,10 +124,10 @@ can never cost the fact that sentence was carrying. See
 | [`evidence-map.md`](evidence-map.md) | Exactly which claim rests on which source, and what that source does *not* prove |
 | [`research-corpus.md`](research-corpus.md) | The underlying research memos and criteria doc themselves |
 
-For *how* the pipeline works mechanically — the four-call sequence, the
-data shapes, the request lifecycle — see [`../pipeline.md`](../pipeline.md)
-and [`../architecture.md`](../architecture.md). This folder never repeats
-that content; it only explains why it exists.
+> For *how* the pipeline works mechanically — the four-call sequence, the
+> data shapes, the request lifecycle — see [`../pipeline.md`](../pipeline.md)
+> and [`../architecture.md`](../architecture.md). This folder never repeats
+> that content; it only explains why it exists.
 ```
 
 ### 4.3 `docs/science/design-rationale.md` — decision-by-decision, RF/DJ/PD-labeled
@@ -247,7 +247,7 @@ finding, not a citation this repo is claiming credit for originating.
 
 ### 4.4 `docs/science/good-summary-conformance.md` — the criteria table, filled in
 
-Outline: reproduce the criteria doc's own category structure (vendored per §4.6), with three added columns — `Does Juno do it?` (Yes/No/Partial/N/A), `Mechanism or reason`, `How to verify`. `Medical device?` is carried over from the source doc unfilled, flagged `[OPEN] — legal/regulatory judgment, not an engineering call this doc can make` rather than silently guessed at.
+Outline: reproduce the criteria doc's own category structure (vendored per §4.6), with three added columns — `Does Juno do it?` (Yes/No/Partial/N/A), `Mechanism or reason`, `How to verify`. `Medical device?` is carried over from the source doc, but every row's cell carries an explicit, uniform marker — `Not assessed — requires regulatory/legal judgment (see §8)` — rather than being left blank: FDA SaMD classification is a regulatory/legal judgment this documentation is not positioned to make, and saying so plainly is more honest than a silent blank a reader could mistake for an oversight.
 
 **How each row is verified, stated once, up front, so the table is falsifiable rather than aspirational:**
 
@@ -291,7 +291,7 @@ Representative rows (the full doc carries every row of the source criteria table
 | Personalization to health literacy | Offer 2-3 levels of language/explanation | Should | **No** | Not implemented; one fixed output for every reader | Absence confirmed — no branching render path exists anywhere in `assemble_and_render.txt` or the frontend |
 ```
 
-`[OPEN]` recorded once for the whole table rather than per-row: **`Medical device?`** is left exactly as blank as the source doc for every row — filling it in requires a regulatory/legal judgment about FDA SaMD classification this PRD is not positioned to make, and guessing at it in either direction would be worse than an honest blank. Flagged in §8 as an owner-only task.
+Noted once for the whole table rather than per-row: **`Medical device?`** carries the explicit marker `Not assessed — requires regulatory/legal judgment (see §8)` in every row, not a blank — FDA SaMD classification is a regulatory/legal judgment this documentation is not positioned to make, and an explicit statement is more honest than a bare blank a reader could mistake for an oversight. Determining the actual classification remains an owner-only task, §8.
 
 ### 4.5 `docs/science/evidence-map.md` — the evidence ledger and its limits
 
@@ -384,21 +384,23 @@ original. Original: [Google Doc link].
 | Paper | Where it's cited from | How to obtain it |
 |---|---|---|
 | AgenticSum | Drive-hosted PDF, linked from memo 00/04/07's Sources | [Drive link] — access-gated; no public arXiv identifier found during this research pass |
-| Asgari et al. (clinical safety / hallucination + omission taxonomy) | Drive-hosted PDF, linked from memos 03/04/05 | [Drive link] — same caveat |
-| Croxford et al. / PDSQI-9 | Drive-hosted PDF, linked from memo 04 | [Drive link] — same caveat |
-| Fact-Controlled Diagnosis of Hallucinations | Drive-hosted PDF, linked from memo 03 | [Drive link] — same caveat |
+| Asgari et al. (clinical safety / hallucination + omission taxonomy) | Drive-hosted PDF, linked from memos 03/04/05 | [Drive link] — access-gated; no public arXiv identifier found during this research pass |
+| Croxford et al. / PDSQI-9 | Drive-hosted PDF, linked from memo 04 | [Drive link] — access-gated; no public arXiv identifier found during this research pass |
+| Fact-Controlled Diagnosis of Hallucinations | Drive-hosted PDF, linked from memo 03 | [Drive link] — access-gated; no public arXiv identifier found during this research pass |
 | AHRQ Health Literacy Universal Precautions Toolkit | Drive-hosted PDF, linked from memo 02/07 | [Drive link] — publicly available from ahrq.gov independent of this Drive copy |
 | Post-hoc attribution unfaithfulness | [arXiv:2412.18004](https://arxiv.org/abs/2412.18004) | Public, durable |
 | LLM verifier rubber-stamping | [arXiv:2310.08118](https://arxiv.org/pdf/2310.08118) | Public, durable |
 | Enumerate-then-verify omission detection | [arXiv:2608.31016](https://arxiv.org/html/2608.31016v1) | Public, durable |
 
-**`[OPEN]`** — four of the seven third-party sources above are known to
-this repo only via a Drive-hosted copy with no public arXiv/DOI identifier
-recorded anywhere in the memos. If any of them do have a public preprint or
-DOI, adding it here would remove the single-point-of-failure risk the Drive
-link carries. Checking this requires either Drive access (to read the PDF's
-own title page/DOI) or a literature search this PRD did not perform — see
-§8.
+**`[RESOLVED]`** — four of the seven third-party sources above (AgenticSum,
+Asgari et al., Croxford et al., Fact-Controlled Diagnosis) are known to this
+repo only via a Drive-hosted copy; no public arXiv/DOI identifier for any
+of them was found during this research pass, and no literature search is
+performed as part of this PRD. The Drive copy is the source of record for
+these four. The single-point-of-failure risk that carries is acknowledged
+and recorded here, not hidden — adding a public identifier later would
+remove it and is a welcome improvement, but it is unowned and not a
+blocking question for this doc family. See §8.
 ```
 
 ## 5. API Change Summary
@@ -422,10 +424,9 @@ There is no code to test; being proportionate about what "testing documentation 
 
 ## 8. Manual Intervention Required From You
 
-- **Decide the `Medical device?` column.** Every row in `good-summary-conformance.md` leaves this blank, matching the source doc — filling it in is a regulatory/legal judgment about FDA SaMD classification (or equivalent) this PRD is not positioned to make.
+- **Decide the `Medical device?` column's actual classification.** Every row in `good-summary-conformance.md` carries the explicit marker `Not assessed — requires regulatory/legal judgment (see §8)` rather than a blank — determining the actual FDA SaMD classification (or equivalent) is a regulatory/legal judgment this PRD is not positioned to make.
 - **Approve the vendoring decision (§4.6)** before `dev-tasks`/`dev-code` authors `research-corpus.md` — specifically, confirm no licensing concern with condensing/summarizing (not reproducing verbatim, except the criteria doc's own table, which the team authored) the eight Drive memos into this repo.
-- **Check whether the four Drive-only third-party papers (AgenticSum, Asgari et al., Croxford et al., Fact-Controlled Diagnosis) have a public arXiv/DOI identifier** — reduces the durability risk §4.6 flags for those four specifically; requires either Drive access to read the PDFs' own metadata or a literature search this PRD did not perform.
-- **Decide `docs/uncalibrated-constants.md`'s authorship** between 16 and 17 (§9) — this PRD's `evidence-map.md` assumes the file exists and links to it; PRD 15 specifies its content in full but does not assign who actually creates the file.
+- **(Optional, unowned) A public arXiv/DOI identifier for the four Drive-only third-party papers** (AgenticSum, Asgari et al., Croxford et al., Fact-Controlled Diagnosis) would remove the single-point-of-failure risk §4.6 records for those four specifically. Not required to ship this doc family and not assigned to anyone — pick up only if someone has Drive access to read the PDFs' own metadata, or wants to run the literature search this PRD does not perform.
 - **Have `dev-tasks`/`dev-code` author the five files** from this PRD's §4 content once approved — this PRD's own scope ends at the PRD, per its own charter.
 - No environment variables, credentials, deploys, or console access needed anywhere in this PRD.
 
@@ -435,9 +436,9 @@ There is no code to test; being proportionate about what "testing documentation 
 - `[RESOLVED: docs/science/ (not docs/agent_files/...) is the location, matching PRD 15's identical reasoning for docs/uncalibrated-constants.md — durable reference material, not a dated design-session record.]`
 - `[RESOLVED: vendor the team's own eight Drive memos (condensed) and the criteria doc (in full) into docs/science/research-corpus.md and good-summary-conformance.md respectively; never vendor the third-party research papers themselves — cite those by URL only, with the durability risk disclosed explicitly for the four Drive-only sources.]` — §4.6.
 - `[RESOLVED: the three tensions with the criteria doc (medication reason, remove-nothing vs. remove-distracting-content, and the numeracy convergence) are recorded as live disagreements in good-summary-conformance.md, both positions stated, with the shipped answer named — not adjudicated by this PRD.]` — §4.4.
-- `[RESOLVED: the "Medical device?" column stays blank, flagged [OPEN] for the owner, rather than this PRD guessing at a regulatory classification.]`
+- `[RESOLVED: every row's "Medical device?" cell carries the explicit marker "Not assessed — requires regulatory/legal judgment (see §8)" instead of a blank — FDA SaMD classification is a regulatory judgment this documentation is not positioned to make, and an explicit statement is more honest than a silent blank a reader could mistake for an oversight. The actual classification remains an owner-only task, §8.]`
 - `[RESOLVED: the two proposals are not in conflict — they operate at different granularities. Inline (16's proposal — "— see X for why" / "— see X for the exact mechanism") is the default for a claim-level cross-reference attached to a specific sentence. This family's own blockquote-style pointer form survives, narrowed to the orientation-signpost role its own §4.2 README sample already demonstrates: a document/section-level "here's where the whole other half of this topic lives" pointer, used once per document or major section, never mid-prose for an individual claim. Reconciled jointly with PRD 16 — see 16 §3 for the same decision stated from its side.]`
-- `[OPEN] — who creates and owns docs/uncalibrated-constants.md.` PRD 15 §4.3 fully specifies its content and location but assigns creation to "a `dev-tasks`/`dev-code` documentation task" without naming which PRD's task list that falls under. This PRD's `evidence-map.md` and `design-rationale.md` both link to it as an existing artifact; 16's mechanism docs are equally likely to want to link to it (PRD 15 §4.3: "PRD 16 should link to it from `docs/pipeline.md`"). Proposed default, not yet agreed: 16 creates it (it sits beside 16's other durable docs), 17 only links to it — but this needs 16's author to confirm, not this PRD to assert unilaterally.
-- `[OPEN] — whether to pursue public arXiv/DOI identifiers for the four Drive-only third-party papers`, per §4.6/§8. Would reduce, not eliminate, the durability risk on those four sources specifically; not performed as part of this PRD since it requires either Drive access or a literature search outside this PRD's read-only, repo-scoped research.
-- `[OPEN] — whether good-summary-conformance.md needs a re-verification pass once PRDs 10–16 actually land as code`, since they are currently design-only and several rows in the sample table (§4.4) cite PRD sections rather than landed code (e.g., the numeracy convergence row cites PRD 10, not yet implemented). §7's maintenance-ownership rule assigns this to whichever future PRD changes the relevant behavior, but no PRD has explicitly picked this up as "my job" the way, e.g., PRD 15's register maintenance rule is stated to bind future PRDs generally — worth the owner confirming this is understood as binding once 10–16 move from design to implementation.
+- `[RESOLVED: PRD 16 creates and owns docs/uncalibrated-constants.md; PRD 17 only links to it.]` PRD 15 §4.3 specifies the file's content and location; PRD 16 creates the file and links it from `docs/pipeline.md`. This PRD's `evidence-map.md` and `design-rationale.md` link to it as an existing artifact they do not own. Recorded consistently in PRDs 15 and 16 as of this batch.
+- `[RESOLVED: no public arXiv/DOI identifiers were confirmed for the four Drive-only third-party papers, and the docs say so explicitly — see §4.6.]` No literature search is performed as part of this PRD. The Drive copy is the source of record for those four; the durability risk is acknowledged and recorded, not hidden. Adding a public identifier later is a welcome improvement if anyone picks it up, but it is unowned and not a blocking question for this doc family.
+- `[RESOLVED: no separate re-verification pass for good-summary-conformance.md is scheduled once PRDs 10–16 land as code.]` §7's maintenance-ownership rule is settled and binding: whichever PRD changes a behavior a row cites owns updating that row's `Does Juno do it?`/mechanism/verification when it moves from design to landed code (e.g., the numeracy convergence row citing PRD 10 is updated as part of PRD 10's own implementation work). No owner confirmation is pending.
 - `[DEFERRED] — any tooling, CI check, or linter enforcing citation validity, RF/DJ/PD tagging, or promotional-language drift in docs/science/.` Matches PRD 15 §7's explicit stance: a mechanical check for prose discipline produces more noise than signal at this scale, and inventing it would be exactly the process ceremony the initiative's locked decisions warn against.

@@ -168,6 +168,9 @@ class Constants:
             "http_status_code", "total_duration_ms", "saved_id", "input_chars",
             "error", "labels", "duration_ms_observed", "OpOutcome",
             "service", "environment",
+            "extraction_signal", "extraction_signal_facts",
+            "coverage_signal",
+            "merge_candidate_signal",   # PRD 14
         ]
         DIM_OUTCOME: str = "OpOutcome"
         DIM_STATUS_CODE: str = "StatusCode"

@@ -159,11 +159,16 @@ export default function CarePlanView({
         </ResultCard>
       )}
 
-      {result.diagnosis && result.diagnosis.details?.length > 0 && (
+      {result.diagnosis && (result.diagnosis.details?.length > 0 || result.reason_for_visit?.length > 0 || !!result.diagnosis.changed_since_last_visit) && (
         <ResultCard color="teal" icon="🔍" title="What the Doctor Found">
           {result.diagnosis.changed_since_last_visit && (
             <p style={{ color: '#0F766E', fontSize: '0.875rem', marginBottom: '12px' }}>
               Compared to last visit: {withTerms(result.diagnosis.changed_since_last_visit)}
+            </p>
+          )}
+          {(!result.diagnosis.details || result.diagnosis.details.length === 0) && (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+              We couldn't confirm the specific findings from your note.
             </p>
           )}
           {(() => {

@@ -27,7 +27,7 @@ design.
 
 | Store | Shape | Notes |
 |---|---|---|
-| Firestore `care_plan_outputs` | One document per job | Holds job status, stage, the resolved input text (until the job finishes), and the completed result. Carries `expires_at`, one hour after creation. |
+| Firestore `care_plan_outputs` | One document per job | Holds job status, stage, and the completed result. The resolved input text never touches Firestore at all — it lives only in the transient GCS input-payload object (below), read once by the worker and deleted at job termination. Carries `expires_at`, one hour after creation. |
 | Firestore `rate_limits` | One document per `{IP hash, hour}` | Per-IP request counters for the abuse guard on `POST /jobs`. Carries its own `expires_at`, set past the counter's own natural expiry with a safety margin. Client IPs are never stored in plaintext — only an HMAC-SHA256 hash. |
 | Cloud Storage | One merged PDF per job that included a file upload | A stored copy of the original submission (not what the pipeline processes — the pipeline works from extracted text), stored under a dedicated upload prefix in the configured bucket. |
 
@@ -38,7 +38,7 @@ design.
 | 1 | Explicit client `DELETE /jobs/<id>` | Fires the instant the result screen mounts for a completed or errored job | Effectively immediate |
 | 2 | Best-effort delete on page unload | `pagehide` (any non-upload screen) or `visibilitychange`→hidden (result screen only) | Immediate, best-effort |
 | 3 | Cloud Storage input cleanup | The worker's `finally` block, on every job outcome (success, failure, or exception) | End of job execution |
-| 4 | `input_text` field clearing | Unconditional, in the same Firestore update that marks a job completed or failed | The moment the job reaches a terminal status |
+| 4 | GCS input-payload cleanup | Unconditional, in the same worker `finally` block, and again on explicit `DELETE /jobs/<job_id>` | End of job execution, or the moment the caller deletes the job |
 | 5 | Firestore native TTL sweep | `expires_at` = 1 hour after job creation | Firestore's documented TTL sweep SLA is "typically within 24 hours" of expiry — worst case roughly **25 hours** |
 | 6 | Cloud Storage lifecycle rule | Bucket-level age-based delete rule applied by the deploy workflow | 1 day |
 | 7 | Scheduled anonymous-account cleanup | Daily Cloud Scheduler trigger → Cloud Run Job | Deletes anonymous Firebase Auth accounts (no linked sign-in provider) older than 24 hours |
@@ -55,16 +55,23 @@ result screen — deliberately *not* while a job is still processing, so switchi
 locking the phone mid-processing can never delete a still-running job. An abandoned
 processing job is left to the TTL backstop (path 5) instead.
 
-**Path 3 — Cloud Storage input cleanup.** The worker deletes the job's stored input PDF
-unconditionally at the end of job execution, after the pipeline has already extracted
-whatever text it needed from it. This delete is best-effort and swallows its own
-errors — a cleanup failure must never fail the job.
+**Path 3 — Cloud Storage input cleanup.** The worker's `finally` block deletes **two**
+GCS objects at the end of job execution, not one: the stored input PDF
+(`input_pdf_gcs_uri`, uploads only) and the input-payload object
+(`input_payload_gcs_uri`, described in Path 4 below) — after the pipeline has already
+extracted whatever text it needed from the latter. Both deletes are best-effort and
+swallow their own errors — a cleanup failure must never fail the job. This second
+object's deletion here was previously entirely undocumented.
 
-**Path 4 — input text clearing.** The top-level `input_text` field on the job document
-is deleted in the same Firestore write that marks the job completed or failed,
-regardless of outcome. (The internal pipeline's raw/simplified/clarified text artifacts
-are also dropped from the stored result before it is written — see
-[`pipeline.md`](pipeline.md) §7.)
+**Path 4 — GCS input-payload cleanup.** There is no raw-text field on the job
+document to clear — input text was moved off Firestore entirely (PRD 09) into a
+transient GCS object, `JobInputPayload{text, provenance}`, referenced by the job
+document's `input_payload_gcs_uri`. That object — not a Firestore field — is what gets
+deleted: unconditionally in the worker's `finally` block (alongside `input_pdf_gcs_uri`,
+Path 3) and again on `DELETE /jobs/<job_id>` (alongside the merged-PDF object). This is a
+genuinely different mechanism from the old field-clearing description — object deletion,
+not field deletion. (The internal pipeline's fact-ID provenance fields are also stripped
+from the stored result before it is written — see [`pipeline.md`](pipeline.md) §7.)
 
 **Path 5 — Firestore TTL.** `expires_at` is set to one hour after job creation.
 Firestore's native TTL feature is the backstop that eventually removes the document if

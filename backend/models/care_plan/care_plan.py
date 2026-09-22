@@ -4,15 +4,28 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from ..base import JsonModel
 from utils.constants import Constants
 
 
+def _blank_str_to_none(v: object) -> object:
+    """Normalize an empty string to None so a field validated by this
+    helper is always exactly one of {None, non-empty text} -- never a
+    third, indistinguishable "" state (PRD 13 S4.1). `object`, not
+    `str | None`: Pydantic calls a mode="before" validator with
+    whatever raw value was actually given, before type coercion runs --
+    a non-str value here is returned unchanged and Pydantic's own type
+    check raises on it immediately afterward, exactly as it would have
+    without this validator in the chain."""
+    return (v or None) if isinstance(v, str) else v
+
+
 class ReasonForVisit(JsonModel):
     reason: str = ""
     description: str = ""
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class DiagnosisDetail(JsonModel):
@@ -21,17 +34,19 @@ class DiagnosisDetail(JsonModel):
     description: str = ""
     what_it_means_for_you: str = ""
     severity: Literal["high", "medium", "low"] | None = None
+    source_fact_ids: list[int] = Field(default_factory=list)
 
 
 class Diagnosis(JsonModel):
     changed_since_last_visit: str = ""
+    changed_since_last_visit_fact_ids: list[int] = Field(default_factory=list)
     details: list[DiagnosisDetail] = Field(default_factory=list)
 
 
 class Medication(JsonModel):
     title: str = ""
     plain_name: str = ""
-    why: str = ""
+    why: str | None = None
     dosage: str = ""
     frequency: str = ""
     timing: str = ""
@@ -42,36 +57,56 @@ class Medication(JsonModel):
     status: Literal["to_do", "done"]
     source_fact_ids: list[int] = Field(default_factory=list)
 
+    @field_validator("why", mode="before")
+    @classmethod
+    def _normalize_why(cls, v):
+        return _blank_str_to_none(v)
+
 
 class Test(JsonModel):
     title: str = ""
     plain_name: str = ""
-    why: str = ""
+    why: str | None = None
     description: str = ""
     preparation: str = ""
     status: Literal["to_do", "done"]
     source_fact_ids: list[int] = Field(default_factory=list)
 
+    @field_validator("why", mode="before")
+    @classmethod
+    def _normalize_why(cls, v):
+        return _blank_str_to_none(v)
+
 
 class Procedure(JsonModel):
     title: str = ""
     plain_name: str = ""
-    why: str = ""
+    why: str | None = None
     what_to_expect: str = ""
     timeframe: str = ""
     status: Literal["to_do", "done"]
     source_fact_ids: list[int] = Field(default_factory=list)
 
+    @field_validator("why", mode="before")
+    @classmethod
+    def _normalize_why(cls, v):
+        return _blank_str_to_none(v)
+
 
 class OtherInstruction(JsonModel):
     title: str = ""
-    why: str = ""
+    why: str | None = None
     steps: list[str] = Field(default_factory=list)
     description: str = ""
     frequency: str = ""
     duration: str = ""
     status: Literal["to_do", "done"]
     source_fact_ids: list[int] = Field(default_factory=list)
+
+    @field_validator("why", mode="before")
+    @classmethod
+    def _normalize_why(cls, v):
+        return _blank_str_to_none(v)
 
 
 class FollowUp(JsonModel):

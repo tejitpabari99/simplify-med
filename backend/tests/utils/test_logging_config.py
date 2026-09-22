@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 
 from observability.logging_config import StructuredJsonFormatter
+from utils.constants import Constants
 
 
 # ---------------------------------------------------------------------------
@@ -98,3 +99,24 @@ def test_trace_fields_still_present():
 
     assert "trace_id" in result
     assert "logging.googleapis.com/trace" in result
+
+
+def test_coverage_signal_key_is_whitelisted():
+    """`coverage_signal` (PRD 11 omission-signal) is present in the extra-key whitelist."""
+    assert "coverage_signal" in Constants.Observability.LOG_EXTRA_KEYS
+
+
+def test_coverage_signal_dict_serialized_verbatim():
+    """The `coverage_signal` dict payload serializes through unchanged (no flattening/dropping)."""
+    result = fmt(make_record(extra={"coverage_signal": {
+        "total": 3,
+        "omitted": 1,
+        "rate": 0.333,
+        "omitted_by_category": {"medications": 1},
+    }}))
+    assert result["coverage_signal"] == {
+        "total": 3,
+        "omitted": 1,
+        "rate": 0.333,
+        "omitted_by_category": {"medications": 1},
+    }
